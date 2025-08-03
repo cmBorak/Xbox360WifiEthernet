@@ -26,21 +26,21 @@ class Xbox360Gadget:
         self.gadget_path = Path(f"/sys/kernel/config/usb_gadget/{gadget_name}")
         self.is_configured = False
         
-        # Xbox 360 Wireless Network Adapter specifications
+        # Xbox 360 Wireless Network Adapter specifications (exact match)
         self.usb_specs = {
             'idVendor': '0x045e',      # Microsoft Corporation
-            'idProduct': '0x0292',     # Xbox 360 Wireless Network Adapter
-            'bcdDevice': '0x0100',     # Device version 1.0
+            'idProduct': '0x02a8',     # Xbox 360 Wireless Network Adapter (correct PID)
+            'bcdDevice': '0x0202',     # Device version 2.02 (from REV_0202)
             'bcdUSB': '0x0200',        # USB 2.0
-            'bDeviceClass': '0xFF',    # Vendor-specific (like original)
-            'bDeviceSubClass': '0xFF', # Vendor-specific
-            'bDeviceProtocol': '0xFF', # Vendor-specific
+            'bDeviceClass': '0xFF',    # Vendor-specific (Class FF)
+            'bDeviceSubClass': '0x00', # SubClass 00
+            'bDeviceProtocol': '0x00', # Protocol 00
         }
         
-        # String descriptors
+        # String descriptors (exact match)
         self.strings = {
             'manufacturer': 'Microsoft Corp.',
-            'product': 'Xbox 360 Wireless Network Adapter',
+            'product': 'Wireless Network Adapter Boot',  # Exact product string
             'serialnumber': self._get_serial_number()
         }
     

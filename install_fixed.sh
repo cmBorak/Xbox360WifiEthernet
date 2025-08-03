@@ -171,20 +171,7 @@ for package in "${PACKAGES[@]}"; do
     fi
 done
 
-# Optional packages (don't fail if they can't be installed)
-OPTIONAL_PACKAGES=(
-    "dnsmasq"
-    "hostapd"
-)
-
-for package in "${OPTIONAL_PACKAGES[@]}"; do
-    if ! dpkg -l | grep -q "^ii.*$package "; then
-        log "Installing optional package $package..."
-        if ! apt-get install -y "$package"; then
-            warning "Failed to install optional package $package"
-        fi
-    fi
-done
+# Note: No additional packages needed for virtual wireless
 
 # Upgrade pip
 log "Upgrading pip..."
@@ -238,11 +225,10 @@ cat > "$CONFIG_DIR/config.json" << 'EOF'
     "use_dhcp": true,
     "static_ip": null
   },
-  "hotspot": {
+  "virtual_wireless": {
     "enabled": true,
-    "ssid": "PI-Net",
-    "password": "xbox360pi",
-    "interface": "wlan0"
+    "auto_connect": true,
+    "network_name": "PI-Net"
   },
   "monitoring": {
     "status_check_interval": 30,

@@ -1,15 +1,15 @@
 # Xbox 360 WiFi Module Emulator
 
-Raspberry Pi 4-based emulation of the Xbox 360 Wireless Network Adapter that enables Xbox 360 consoles to leverage gigabit ethernet connectivity through USB gadget mode AND creates a wireless access point "PI-Net" for wireless connections.
+Raspberry Pi 4-based emulation of the Xbox 360 Wireless Network Adapter that enables Xbox 360 consoles to leverage gigabit ethernet connectivity by making the Xbox think it's connected to a wireless network "PI-Net" through the USB connection.
 
 ## Features
 
-- **Dual Mode**: USB gadget emulation + WiFi hotspot "PI-Net" 
-- **High Performance**: 1000Mbps vs 54Mbps original adapter speeds
-- **Wireless Scanning**: Xbox 360 can scan and connect to "PI-Net" hotspot
-- **Cost Effective**: ~$35 vs $50-100 for original adapters  
+- **Virtual Wireless**: Xbox 360 thinks it's connected to wireless "PI-Net" network
+- **High Performance**: 1000Mbps vs 54Mbps original adapter speeds  
+- **Perfect Emulation**: Xbox can scan and "connect" to virtual PI-Net network
+- **Cost Effective**: ~$35 vs $50-100 for original adapters
 - **Reliable**: Modern hardware vs aging wireless chips
-- **Compatible**: Emulates official Xbox 360 WiFi adapter (VID:0x045E, PID:0x0292)
+- **Exact Match**: Emulates official Xbox 360 WiFi adapter (VID:0x045E, PID:0x02A8)
 
 ## Hardware Requirements
 
@@ -38,16 +38,18 @@ Raspberry Pi 4-based emulation of the Xbox 360 Wireless Network Adapter that ena
 ```
                     ┌─────────────────┐
                     │   Xbox 360      │
+                    │ "Sees PI-Net    │
+                    │  Wireless Net"  │
                     └─────────────────┘
-                           │   │
-                    USB-C  │   │ WiFi Scan
-                           │   │
+                           │
+                       USB-C Connection
+                           │
                     ┌─────────────────┐
                     │ Raspberry Pi 4  │
                     │                 │
-                    │ USB Gadget +    │
-                    │ WiFi Hotspot    │
-                    │ "PI-Net"        │
+                    │ Virtual Wireless│
+                    │ USB Gadget      │
+                    │ Emulation       │
                     └─────────────────┘
                            │
                       Ethernet
@@ -57,9 +59,10 @@ Raspberry Pi 4-based emulation of the Xbox 360 Wireless Network Adapter that ena
                     └─────────────────┘
 ```
 
-**Dual Connection Mode**:
-- **USB Mode**: Direct USB connection with gadget emulation
-- **WiFi Mode**: Xbox 360 scans and connects to "PI-Net" hotspot
+**Virtual Wireless Mode**:
+- **Physical**: USB-C connection between Xbox 360 and Pi
+- **Virtual**: Xbox 360 thinks it's wirelessly connected to "PI-Net"
+- **Routing**: All traffic flows through Pi's ethernet to internet
 
 ## Implementation Phases
 

@@ -78,28 +78,50 @@ log "Installing Python analysis tools..."
 pip3 install --upgrade pip
 pip3 install pyusb
 
-# Setup USB-Sniffify
+# Setup USB-Sniffify (using included source)
 log "Setting up USB-Sniffify..."
-cd "$TOOLS_DIR"
 
-if [ ! -d "usb-sniffify" ]; then
-    log "Cloning USB-Sniffify repository..."
-    git clone https://github.com/blegas78/usb-sniffify.git
+# Use included USB-Sniffify source
+USB_SNIFFIFY_SOURCE="$SCRIPT_DIR/usb_sniffing_tools/usb-sniffify"
+
+if [ -d "$USB_SNIFFIFY_SOURCE" ]; then
+    log "Found included USB-Sniffify source"
+    
+    # Build USB-Sniffify using our build script
+    if [ -f "$SCRIPT_DIR/build_usb_sniffify.sh" ]; then
+        log "Building USB-Sniffify from included source..."
+        if bash "$SCRIPT_DIR/build_usb_sniffify.sh"; then
+            success "USB-Sniffify built successfully from included source"
+        else
+            warning "Failed to build USB-Sniffify from included source"
+            warning "Continuing with usbmon only"
+            SKIP_USB_SNIFFIFY=true
+        fi
+    else
+        warning "Build script not found, attempting manual build..."
+        cd "$USB_SNIFFIFY_SOURCE"
+        
+        if [ -f "CMakeLists.txt" ]; then
+            log "Building with CMake..."
+            mkdir -p build
+            cd build
+            if cmake .. && make; then
+                success "USB-Sniffify built with CMake"
+            else
+                warning "CMake build failed, continuing with usbmon only"
+                SKIP_USB_SNIFFIFY=true
+            fi
+        else
+            warning "No build system found for USB-Sniffify"
+            SKIP_USB_SNIFFIFY=true
+        fi
+        
+        cd "$SCRIPT_DIR"
+    fi
 else
-    log "USB-Sniffify already cloned, updating..."
-    cd usb-sniffify
-    git pull
-    cd ..
-fi
-
-cd usb-sniffify
-
-log "Building USB-Sniffify..."
-if make; then
-    success "USB-Sniffify built successfully"
-else
-    error "Failed to build USB-Sniffify"
-    exit 1
+    warning "USB-Sniffify source not found at $USB_SNIFFIFY_SOURCE"
+    warning "Continuing with usbmon only (which is more reliable anyway)"
+    SKIP_USB_SNIFFIFY=true
 fi
 
 # Check for raw_gadget kernel module
@@ -156,6 +178,23 @@ cat > "$SCRIPT_DIR/capture_with_usbsniffify.sh" << 'EOF'
 TOOLS_DIR="$(dirname "$0")/usb_sniffing_tools"
 CAPTURE_DIR="$(dirname "$0")/captures"
 
+# Check if USB-Sniffify is available (check both possible locations)
+USB_SNIFFIFY_EXEC=""
+if [ -f "$TOOLS_DIR/usb-sniffify/build/usb-sniffify" ]; then
+    USB_SNIFFIFY_EXEC="$TOOLS_DIR/usb-sniffify/build/usb-sniffify"
+elif [ -f "$TOOLS_DIR/usb-sniffify/usb-sniffify" ]; then
+    USB_SNIFFIFY_EXEC="$TOOLS_DIR/usb-sniffify/usb-sniffify"
+else
+    echo "❌ USB-Sniffify not found"
+    echo "   Expected locations:"
+    echo "     $TOOLS_DIR/usb-sniffify/build/usb-sniffify"
+    echo "     $TOOLS_DIR/usb-sniffify/usb-sniffify"
+    echo ""
+    echo "   Build it with: sudo $(dirname "$0")/build_usb_sniffify.sh"
+    echo "   Or use usbmon instead: $(dirname "$0")/capture_with_usbmon.sh $*"
+    exit 1
+fi
+
 if [ $# -lt 2 ]; then
     echo "Usage: $0 <scenario> <duration_seconds>"
     echo "Scenarios: enumeration, authentication, network_ops"
@@ -171,11 +210,19 @@ echo "🕵️  Starting USB-Sniffify capture for $SCENARIO scenario"
 echo "   Duration: ${DURATION}s"
 echo "   Output: $OUTPUT_FILE"
 
-cd "$TOOLS_DIR/usb-sniffify"
-timeout "$DURATION" ./usb-sniffify --mode capture --log "$OUTPUT_FILE" || true
+mkdir -p "$(dirname "$OUTPUT_FILE")"
 
-echo "✅ Capture completed: $OUTPUT_FILE"
-echo "   Run analysis: python3 ../xbox_capture_analyzer.py '$OUTPUT_FILE' -o '${OUTPUT_FILE%.log}_analysis.md'"
+echo "   Using: $USB_SNIFFIFY_EXEC"
+if timeout "$DURATION" "$USB_SNIFFIFY_EXEC" --mode capture --log "$OUTPUT_FILE" 2>/dev/null; then
+    echo "✅ Capture completed: $OUTPUT_FILE"
+else
+    echo "❌ USB-Sniffify capture failed"
+    echo "   Try using usbmon instead:"
+    echo "   $(dirname "$0")/capture_with_usbmon.sh $SCENARIO $DURATION"
+    exit 1
+fi
+
+echo "   Run analysis: python3 $(dirname "$0")/src/xbox_capture_analyzer.py '$OUTPUT_FILE' -o '${OUTPUT_FILE%.log}_analysis.md'"
 EOF
 
 chmod +x "$SCRIPT_DIR/capture_with_usbsniffify.sh"

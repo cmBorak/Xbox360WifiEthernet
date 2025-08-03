@@ -17,6 +17,7 @@ from datetime import datetime
 from xbox360_gadget import Xbox360Gadget
 from network_bridge import Xbox360NetworkBridge
 from virtual_wireless import Xbox360VirtualWireless
+from xbox_functionfs import Xbox360FunctionFS
 
 # Configure logging
 logging.basicConfig(
@@ -45,6 +46,9 @@ class Xbox360EmulatorManager:
         )
         self.virtual_wireless = Xbox360VirtualWireless(
             usb_interface=self.config['bridge']['usb_interface']
+        )
+        self.functionfs = Xbox360FunctionFS(
+            mount_point=self.config.get('functionfs', {}).get('mount_point', '/dev/xbox360_ffs')
         )
         
         # State tracking
@@ -80,6 +84,10 @@ class Xbox360EmulatorManager:
                 'enabled': True,
                 'auto_connect': True,
                 'network_name': 'PI-Net'
+            },
+            'functionfs': {
+                'enabled': True,
+                'mount_point': '/dev/xbox360_ffs'
             },
             'monitoring': {
                 'status_check_interval': 30,
@@ -183,10 +191,17 @@ class Xbox360EmulatorManager:
             if not self.check_system_requirements():
                 raise RuntimeError("System requirements not met")
             
-            # Setup USB gadget
-            logger.info("Setting up USB gadget...")
+            # Setup USB gadget structure
+            logger.info("Setting up USB gadget structure...")
             if not self.gadget.setup_complete_gadget():
-                raise RuntimeError("Failed to setup USB gadget")
+                raise RuntimeError("Failed to setup USB gadget structure")
+            
+            # Start FunctionFS if enabled
+            if self.config['functionfs']['enabled']:
+                logger.info("Starting FunctionFS for Xbox authentication...")
+                if not self.functionfs.start():
+                    raise RuntimeError("Failed to start FunctionFS")
+                logger.info("✅ FunctionFS started - Xbox authentication ready")
             
             # Setup network bridge
             logger.info("Setting up network bridge...")
@@ -316,6 +331,7 @@ class Xbox360EmulatorManager:
         gadget_status = self.gadget.get_status()
         bridge_status = self.bridge.get_bridge_status()
         wireless_status = self.virtual_wireless.get_connection_status() if self.config['virtual_wireless']['enabled'] else {'connected': False, 'current_network': 'Disabled'}
+        functionfs_status = self.functionfs.get_status() if self.config['functionfs']['enabled'] else {'running': False, 'auth_status': {'authenticated': False}}
         
         # Calculate uptime
         uptime_seconds = 0
@@ -332,6 +348,7 @@ class Xbox360EmulatorManager:
             'gadget': gadget_status,
             'bridge': bridge_status,
             'virtual_wireless': wireless_status,
+            'functionfs': functionfs_status,
             'statistics': self.stats.copy(),
             'config': self.config
         }
@@ -373,6 +390,13 @@ class Xbox360EmulatorManager:
             except Exception as e:
                 logger.warning(f"Error stopping virtual wireless: {e}")
         
+        # Stop FunctionFS
+        if self.config['functionfs']['enabled']:
+            try:
+                self.functionfs.stop()
+            except Exception as e:
+                logger.warning(f"Error stopping FunctionFS: {e}")
+        
         logger.info("🛑 Xbox 360 WiFi Module Emulator stopped")
     
     def run_interactive_mode(self):
@@ -393,6 +417,7 @@ class Xbox360EmulatorManager:
                 print(f"🔌 USB Gadget: {'Active' if status['gadget']['active'] else 'Inactive'}")
                 print(f"🌐 Bridge: {'Up' if status['bridge']['bridge_up'] else 'Down'}")
                 print(f"📡 Virtual Wireless: {status['virtual_wireless']['current_network']} ({'Connected' if status['virtual_wireless']['connected'] else 'Disconnected'})")
+                print(f"🔐 Xbox Auth: {'Authenticated' if status['functionfs']['auth_status']['authenticated'] else 'Not Authenticated'}")
                 print(f"🔗 Connections: {status['statistics']['xbox_connections']}")
                 
                 if status['bridge']['ip_address']:

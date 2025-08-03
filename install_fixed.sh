@@ -230,6 +230,10 @@ cat > "$CONFIG_DIR/config.json" << 'EOF'
     "auto_connect": true,
     "network_name": "PI-Net"
   },
+  "functionfs": {
+    "enabled": true,
+    "mount_point": "/dev/xbox360_ffs"
+  },
   "monitoring": {
     "status_check_interval": 30,
     "connection_monitor": true,

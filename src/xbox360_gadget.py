@@ -141,35 +141,25 @@ class Xbox360Gadget:
         
         logger.info("✅ USB gadget structure created")
     
-    def create_network_function(self, function_type="ncm"):
-        """Create network function (NCM is most modern)"""
-        logger.info(f"Creating {function_type} network function...")
+    def create_functionfs_function(self):
+        """Create FunctionFS function for Xbox authentication"""
+        logger.info("Creating FunctionFS function for Xbox 360...")
         
-        function_path = self.gadget_path / f"functions" / f"{function_type}.usb0"
+        function_path = self.gadget_path / "functions" / "ffs.xbox360"
         os.makedirs(function_path, exist_ok=True)
-        
-        # Get host MAC address (from eth0)
-        try:
-            host_mac = self._run_command("cat /sys/class/net/eth0/address")
-        except:
-            host_mac = "b8:27:eb:12:34:56"  # Default Pi MAC pattern
-        
-        # Set MAC addresses
-        self._write_file(function_path / "host_addr", host_mac)
-        self._write_file(function_path / "dev_addr", "02:22:82:12:34:56")
         
         # Link function to configuration
         config_path = self.gadget_path / "configs" / "c.1"
-        link_path = config_path / f"{function_type}.usb0"
+        link_path = config_path / "ffs.xbox360"
         
         # Remove existing link if it exists
         if link_path.exists():
             os.unlink(link_path)
         
         # Create symlink
-        os.symlink(f"../../functions/{function_type}.usb0", link_path)
+        os.symlink("../../functions/ffs.xbox360", link_path)
         
-        logger.info(f"✅ {function_type.upper()} network function created")
+        logger.info("✅ FunctionFS function created")
     
     def activate_gadget(self):
         """Activate the USB gadget"""
@@ -247,10 +237,11 @@ class Xbox360Gadget:
         try:
             self.check_prerequisites()
             self.create_gadget()
-            self.create_network_function("ncm")  # NCM is most modern
-            self.activate_gadget()
+            self.create_functionfs_function()  # Use FunctionFS for Xbox auth
+            # Note: Gadget activation is handled by FunctionFS after descriptors are written
             
-            logger.info("🎮 Xbox 360 WiFi Adapter emulator ready!")
+            logger.info("🎮 Xbox 360 WiFi Adapter gadget structure ready!")
+            logger.info("   FunctionFS will activate when descriptors are written")
             return True
             
         except Exception as e:

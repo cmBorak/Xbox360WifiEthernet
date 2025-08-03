@@ -16,6 +16,7 @@ from datetime import datetime
 # Import our custom modules
 from xbox360_gadget import Xbox360Gadget
 from network_bridge import Xbox360NetworkBridge
+from wifi_hotspot import Xbox360WiFiHotspot
 
 # Configure logging
 logging.basicConfig(
@@ -41,6 +42,11 @@ class Xbox360EmulatorManager:
             bridge_name=self.config['bridge']['name'],
             eth_interface=self.config['bridge']['eth_interface'],
             usb_interface=self.config['bridge']['usb_interface']
+        )
+        self.hotspot = Xbox360WiFiHotspot(
+            ssid=self.config['hotspot']['ssid'],
+            password=self.config['hotspot']['password'],
+            interface=self.config['hotspot']['interface']
         )
         
         # State tracking
@@ -71,6 +77,12 @@ class Xbox360EmulatorManager:
                 'usb_interface': 'usb0',
                 'use_dhcp': True,
                 'static_ip': None
+            },
+            'hotspot': {
+                'enabled': True,
+                'ssid': 'PI-Net',
+                'password': 'xbox360pi',
+                'interface': 'wlan0'
             },
             'monitoring': {
                 'status_check_interval': 30,
@@ -183,6 +195,14 @@ class Xbox360EmulatorManager:
             logger.info("Setting up network bridge...")
             if not self.bridge.setup_complete_bridge(wait_for_usb=False):
                 raise RuntimeError("Failed to setup network bridge")
+            
+            # Setup WiFi hotspot if enabled
+            if self.config['hotspot']['enabled']:
+                logger.info("Setting up WiFi hotspot 'PI-Net'...")
+                if not self.hotspot.setup_complete_hotspot(self.config['bridge']['eth_interface']):
+                    logger.warning("Failed to setup WiFi hotspot - continuing without wireless")
+                else:
+                    logger.info("✅ WiFi hotspot 'PI-Net' available for Xbox 360 scanning")
             
             # Start monitoring
             if self.config['monitoring']['connection_monitor']:
@@ -297,6 +317,7 @@ class Xbox360EmulatorManager:
         """Get comprehensive system status"""
         gadget_status = self.gadget.get_status()
         bridge_status = self.bridge.get_bridge_status()
+        hotspot_status = self.hotspot.get_status() if self.config['hotspot']['enabled'] else {'running': False, 'ssid': 'Disabled'}
         
         # Calculate uptime
         uptime_seconds = 0
@@ -312,6 +333,7 @@ class Xbox360EmulatorManager:
             },
             'gadget': gadget_status,
             'bridge': bridge_status,
+            'hotspot': hotspot_status,
             'statistics': self.stats.copy(),
             'config': self.config
         }
@@ -346,6 +368,13 @@ class Xbox360EmulatorManager:
         except Exception as e:
             logger.warning(f"Error deactivating gadget: {e}")
         
+        # Stop WiFi hotspot
+        if self.config['hotspot']['enabled']:
+            try:
+                self.hotspot.stop_services()
+            except Exception as e:
+                logger.warning(f"Error stopping hotspot: {e}")
+        
         logger.info("🛑 Xbox 360 WiFi Module Emulator stopped")
     
     def run_interactive_mode(self):
@@ -365,10 +394,14 @@ class Xbox360EmulatorManager:
                 print(f"⏱️  Uptime: {status['system']['uptime_formatted']}")
                 print(f"🔌 USB Gadget: {'Active' if status['gadget']['active'] else 'Inactive'}")
                 print(f"🌐 Bridge: {'Up' if status['bridge']['bridge_up'] else 'Down'}")
-                print(f"📡 Connections: {status['statistics']['xbox_connections']}")
+                print(f"📡 WiFi Hotspot: {status['hotspot']['ssid']} ({'Active' if status['hotspot']['running'] else 'Inactive'})")
+                print(f"🔗 Connections: {status['statistics']['xbox_connections']}")
                 
                 if status['bridge']['ip_address']:
-                    print(f"🔗 IP Address: {status['bridge']['ip_address']}")
+                    print(f"🌉 Bridge IP: {status['bridge']['ip_address']}")
+                if status['hotspot']['running']:
+                    print(f"📶 Hotspot IP: {status['hotspot']['ip_address']}")
+                    print(f"🔐 WiFi Password: {self.config['hotspot']['password']}")
                 
                 print("\nPress Ctrl+C to stop...")
                 time.sleep(10)

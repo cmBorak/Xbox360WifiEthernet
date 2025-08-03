@@ -1,10 +1,12 @@
 # Xbox 360 WiFi Module Emulator
 
-Raspberry Pi 4-based emulation of the Xbox 360 Wireless Network Adapter that enables Xbox 360 consoles to leverage gigabit ethernet connectivity through USB gadget mode.
+Raspberry Pi 4-based emulation of the Xbox 360 Wireless Network Adapter that enables Xbox 360 consoles to leverage gigabit ethernet connectivity through USB gadget mode AND creates a wireless access point "PI-Net" for wireless connections.
 
 ## Features
 
+- **Dual Mode**: USB gadget emulation + WiFi hotspot "PI-Net" 
 - **High Performance**: 1000Mbps vs 54Mbps original adapter speeds
+- **Wireless Scanning**: Xbox 360 can scan and connect to "PI-Net" hotspot
 - **Cost Effective**: ~$35 vs $50-100 for original adapters  
 - **Reliable**: Modern hardware vs aging wireless chips
 - **Compatible**: Emulates official Xbox 360 WiFi adapter (VID:0x045E, PID:0x0292)
@@ -34,10 +36,30 @@ Raspberry Pi 4-based emulation of the Xbox 360 Wireless Network Adapter that ena
 ## Architecture
 
 ```
-Xbox 360 ←→ [USB-C] Pi 4 [Ethernet] ←→ Router/Internet
-          USB Gadget    Bridge
-          (Fake WiFi)   Software
+                    ┌─────────────────┐
+                    │   Xbox 360      │
+                    └─────────────────┘
+                           │   │
+                    USB-C  │   │ WiFi Scan
+                           │   │
+                    ┌─────────────────┐
+                    │ Raspberry Pi 4  │
+                    │                 │
+                    │ USB Gadget +    │
+                    │ WiFi Hotspot    │
+                    │ "PI-Net"        │
+                    └─────────────────┘
+                           │
+                      Ethernet
+                           │
+                    ┌─────────────────┐
+                    │ Router/Internet │
+                    └─────────────────┘
 ```
+
+**Dual Connection Mode**:
+- **USB Mode**: Direct USB connection with gadget emulation
+- **WiFi Mode**: Xbox 360 scans and connects to "PI-Net" hotspot
 
 ## Implementation Phases
 

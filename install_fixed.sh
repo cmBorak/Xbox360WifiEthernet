@@ -238,6 +238,12 @@ cat > "$CONFIG_DIR/config.json" << 'EOF'
     "use_dhcp": true,
     "static_ip": null
   },
+  "hotspot": {
+    "enabled": true,
+    "ssid": "PI-Net",
+    "password": "xbox360pi",
+    "interface": "wlan0"
+  },
   "monitoring": {
     "status_check_interval": 30,
     "connection_monitor": true,

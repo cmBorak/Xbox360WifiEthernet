@@ -3,8 +3,7 @@ Version=1.0
 Type=Application
 Name=Xbox 360 WiFi Emulator
 Comment=Install and manage Xbox 360 WiFi Module Emulator
-Exec=Sudo bash -c 'cd "%k" && if [ -f installer.py ]; then python3 installer.py; else zenity --error --text="installer.py not found. Make sure you are running this from the Xbox360WifiEthernet directory."; fi'
-Path=/home/pi/Documents/GitHub/PI usb faker/Xbox360WifiEthernet
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"; cd "$SCRIPT_DIR" && if [ -f installer.py ]; then python3 installer.py; else zenity --error --text="installer.py not found in $SCRIPT_DIR. Please place this desktop file in the Xbox360WifiEthernet directory."; fi'
 Icon=network-wireless
 Terminal=false
 Categories=System;Network;
@@ -13,14 +12,14 @@ MimeType=application/x-executable;
 
 [Desktop Action Install]
 Name=Install Emulator
-Exec=bash -c 'cd "%k" && pkexec python3 installer.py'
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"; cd "$SCRIPT_DIR" && if [ -f installer.py ]; then python3 installer.py; else zenity --error --text="installer.py not found in $SCRIPT_DIR"; fi'
 
 [Desktop Action Status]
 Name=Check Status  
-Exec=bash -c 'cd "%k" && python3 installer.py --status; read -p "Press Enter to close..."'
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"; cd "$SCRIPT_DIR" && if [ -f installer.py ]; then python3 installer.py --status; read -p "Press Enter to close..."; else zenity --error --text="installer.py not found in $SCRIPT_DIR"; fi'
 
 [Desktop Action Test]
 Name=Test System
-Exec=bash -c 'cd "%k" && python3 test.py; read -p "Press Enter to close..."'
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"; cd "$SCRIPT_DIR" && if [ -f test.py ]; then python3 test.py; read -p "Press Enter to close..."; elif [ -f installer.py ]; then python3 installer.py --test; read -p "Press Enter to close..."; else zenity --error --text="No test script found in $SCRIPT_DIR"; fi'
 
 Actions=Install;Status;Test;

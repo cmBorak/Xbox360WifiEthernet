@@ -86,7 +86,7 @@ if exist "C:\Windows\System32\wsl.exe" (
         echo 3. Run this script again
         echo.
         echo Or try running directly in WSL:
-        echo   wsl bash -c "cd '/mnt/c/Users/Chris/Documents/GitHub/PI usb faker/Xbox360WifiEthernet' && python3 installer.py"
+        echo   wsl bash -c "cd '%MANUAL_PATH%' && python3 installer.py"
     )
 )
 

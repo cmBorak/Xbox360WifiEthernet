@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  xbox360-test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.simple
+    container_name: xbox360-test
+    stdin_open: true
+    tty: true
+    volumes:
+      - ..:/opt/xbox360-emulator
+    working_dir: /opt/xbox360-emulator
+    command: bash

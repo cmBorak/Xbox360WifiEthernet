@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  pi-emulator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.pi-emulator
+    container_name: xbox360-pi-emulator
+    hostname: raspberrypi
+    privileged: true
+    volumes:
+      # Mount the project directory
+      - ..:/opt/xbox360-emulator
+      # Mount for X11 forwarding (Linux)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Mount for systemd
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - CONTAINER_ROLE=pi-emulator
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    networks:
+      - xbox360-net
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+  # Optional: VNC server for GUI access without X11 forwarding
+  vnc-server:
+    image: dorowu/ubuntu-desktop-lxde-vnc:latest
+    container_name: xbox360-vnc
+    ports:
+      - "6080:80"
+      - "5900:5900"
+    environment:
+      - VNC_PASSWORD=xbox360
+      - RESOLUTION=1024x768
+    volumes:
+      - ..:/opt/xbox360-emulator
+    networks:
+      - xbox360-net
+    profiles:
+      - vnc
+
+networks:
+  xbox360-net:
+    driver: bridge

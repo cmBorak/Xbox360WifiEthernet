@@ -1,0 +1,51 @@
+# Simplified Xbox 360 WiFi Module Emulator - Raspberry Pi Docker Emulator
+FROM debian:bullseye-slim
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install essential packages only
+RUN apt-get update && apt-get install -y \
+    python3 python3-pip python3-tk \
+    curl wget git nano \
+    build-essential cmake \
+    libusb-1.0-0-dev usbutils \
+    sudo systemctl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create pi user
+RUN useradd -m -s /bin/bash pi && \
+    echo 'pi:raspberry' | chpasswd && \
+    usermod -aG sudo pi && \
+    echo 'pi ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/pi
+
+# Create mock Raspberry Pi environment
+RUN echo "Hardware	: BCM2711" > /tmp/pi_cpuinfo && \
+    echo "Model		: Raspberry Pi 4 Model B Rev 1.1" >> /tmp/pi_cpuinfo && \
+    mkdir -p /boot && \
+    echo "# Pi config" > /boot/config.txt && \
+    echo "console=tty1" > /boot/cmdline.txt
+
+# Create mock directories
+RUN mkdir -p /sys/class/udc && \
+    mkdir -p /sys/kernel/debug/usb/usbmon && \
+    mkdir -p /sys/kernel/config/usb_gadget
+
+# Create mock lsusb command
+RUN echo '#!/bin/bash' > /usr/local/bin/lsusb && \
+    echo 'echo "Bus 001 Device 003: ID 045e:02a8 Microsoft Corp. Xbox 360 Wireless Adapter"' >> /usr/local/bin/lsusb && \
+    chmod +x /usr/local/bin/lsusb
+
+# Set working directory
+WORKDIR /opt/xbox360-emulator
+
+# Copy files from context
+COPY . /opt/xbox360-emulator/
+RUN chown -R pi:pi /opt/xbox360-emulator
+
+# Switch to pi user
+USER pi
+
+CMD ["bash"]

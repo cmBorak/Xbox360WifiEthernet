@@ -1,0 +1,26 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xbox 360 WiFi Emulator
+Comment=Install and manage Xbox 360 WiFi Module Emulator
+Exec=Sudo bash -c 'cd "%k" && if [ -f installer.py ]; then python3 installer.py; else zenity --error --text="installer.py not found. Make sure you are running this from the Xbox360WifiEthernet directory."; fi'
+Path=/home/pi/Documents/GitHub/PI usb faker/Xbox360WifiEthernet
+Icon=network-wireless
+Terminal=false
+Categories=System;Network;
+StartupNotify=true
+MimeType=application/x-executable;
+
+[Desktop Action Install]
+Name=Install Emulator
+Exec=bash -c 'cd "%k" && pkexec python3 installer.py'
+
+[Desktop Action Status]
+Name=Check Status  
+Exec=bash -c 'cd "%k" && python3 installer.py --status; read -p "Press Enter to close..."'
+
+[Desktop Action Test]
+Name=Test System
+Exec=bash -c 'cd "%k" && python3 test.py; read -p "Press Enter to close..."'
+
+Actions=Install;Status;Test;

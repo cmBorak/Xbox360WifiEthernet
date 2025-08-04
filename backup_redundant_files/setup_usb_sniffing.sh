@@ -38,7 +38,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Get script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}\")\" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOOLS_DIR="$SCRIPT_DIR/usb_sniffing_tools"
 
 log "Creating tools directory..."

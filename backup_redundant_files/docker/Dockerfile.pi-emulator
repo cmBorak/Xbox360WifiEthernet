@@ -1,0 +1,178 @@
+# Xbox 360 WiFi Module Emulator - Raspberry Pi Docker Emulator
+# This creates a containerized Raspberry Pi-like environment for testing
+
+FROM debian:bullseye
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DISPLAY=:0
+ENV PYTHONUNBUFFERED=1
+
+# Install base system packages
+RUN apt-get update && apt-get install -y \
+    # Base system
+    curl wget unzip git nano vim \
+    # Python and GUI support
+    python3 python3-pip python3-tk python3-dev \
+    # Build tools
+    build-essential cmake pkg-config \
+    # USB and networking tools
+    libusb-1.0-0-dev usbutils bridge-utils iptables \
+    # System tools
+    systemd systemd-sysv dbus kmod \
+    # GUI and X11 support
+    xauth x11-apps mesa-utils \
+    # PolicyKit for GUI sudo
+    policykit-1 \
+    # Additional tools for emulation
+    qemu-user-static binfmt-support \
+    # Raspberry Pi specific emulation
+    device-tree-compiler \
+    # Clean up
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create raspberry pi user and groups
+RUN groupadd -g 1000 pi && \
+    useradd -u 1000 -g pi -G sudo,adm,dialout,cdrom,floppy,audio,dip,video,plugdev,netdev -s /bin/bash -m pi && \
+    echo 'pi:raspberry' | chpasswd && \
+    echo 'pi ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/pi
+
+# Emulate Raspberry Pi hardware information
+RUN mkdir -p /proc && \
+    echo "processor	: 0" > /proc/cpuinfo && \
+    echo "model name	: ARMv8 Processor rev 3 (v8l)" >> /proc/cpuinfo && \
+    echo "BogoMIPS	: 108.00" >> /proc/cpuinfo && \
+    echo "Features	: fp asimd evtstrm crc32 cpuid" >> /proc/cpuinfo && \
+    echo "CPU implementer	: 0x41" >> /proc/cpuinfo && \
+    echo "CPU architecture: 8" >> /proc/cpuinfo && \
+    echo "CPU variant	: 0x0" >> /proc/cpuinfo && \
+    echo "CPU part	: 0xd08" >> /proc/cpuinfo && \
+    echo "CPU revision	: 3" >> /proc/cpuinfo && \
+    echo "" >> /proc/cpuinfo && \
+    echo "Hardware	: BCM2711" >> /proc/cpuinfo && \
+    echo "Revision	: c03111" >> /proc/cpuinfo && \
+    echo "Serial		: 10000000deadbeef" >> /proc/cpuinfo && \
+    echo "Model		: Raspberry Pi 4 Model B Rev 1.1" >> /proc/cpuinfo
+
+# Create mock Raspberry Pi boot directory structure
+RUN mkdir -p /boot && \
+    echo "# Raspberry Pi 4 config.txt" > /boot/config.txt && \
+    echo "arm_64bit=1" >> /boot/config.txt && \
+    echo "dtparam=audio=on" >> /boot/config.txt && \
+    echo "camera_auto_detect=1" >> /boot/config.txt && \
+    echo "display_auto_detect=1" >> /boot/config.txt && \
+    echo "[cm4]" >> /boot/config.txt && \
+    echo "otg_mode=1" >> /boot/config.txt && \
+    echo "[all]" >> /boot/config.txt && \
+    echo "" >> /boot/config.txt && \
+    echo "console=serial0,115200 console=tty1 root=PARTUUID=deadbeef-02 rootfstype=ext4 elevator=deadline fsck.repair=yes rootwait quiet splash plymouth.ignore-serial-consoles" > /boot/cmdline.txt
+
+# Create mock USB gadget infrastructure
+RUN mkdir -p /sys/kernel/config/usb_gadget && \
+    mkdir -p /sys/class/udc && \
+    mkdir -p /sys/kernel/debug/usb/usbmon && \
+    # Create mock UDC (USB Device Controller)
+    echo "20980000.usb" > /sys/class/udc/20980000.usb && \
+    # Create mock kernel modules directory
+    mkdir -p /lib/modules/$(uname -r)/kernel/drivers/usb/gadget && \
+    # Create mock module files
+    touch /lib/modules/$(uname -r)/kernel/drivers/usb/gadget/libcomposite.ko && \
+    touch /lib/modules/$(uname -r)/kernel/drivers/usb/gadget/g_ether.ko
+
+# Install Python packages for Xbox emulator
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install pyusb
+
+# Create systemd service directory
+RUN mkdir -p /etc/systemd/system
+
+# Set up working directory
+WORKDIR /opt/xbox360-emulator
+
+# Copy emulator files (these will be mounted from host)
+COPY --chown=pi:pi . /opt/xbox360-emulator/
+
+# Create startup script
+RUN cat > /usr/local/bin/pi-emulator-init.sh << 'EOF'
+#!/bin/bash
+# Raspberry Pi Emulator initialization script
+
+echo "🥧 Initializing Raspberry Pi 4 Emulator..."
+
+# Load mock kernel modules
+echo "Loading USB gadget modules..."
+echo "libcomposite" > /proc/modules
+echo "dwc2" >> /proc/modules
+echo "g_ether" >> /proc/modules
+echo "usbmon" >> /proc/modules
+
+# Set up mock USB monitoring
+echo "Setting up USB monitoring..."
+mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
+
+# Create mock lsusb output for Xbox adapter
+cat > /tmp/mock_lsusb << 'LSUSB'
+Bus 002 Device 001: ID 1d6b:0003 Linux Foundation 3.0 root hub
+Bus 001 Device 003: ID 045e:02a8 Microsoft Corp. Xbox 360 Wireless Adapter
+Bus 001 Device 002: ID 2109:3431 VIA Labs, Inc. Hub
+Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub
+LSUSB
+
+# Override lsusb command to show Xbox adapter
+cat > /usr/local/bin/lsusb << 'LSUSB_SCRIPT'
+#!/bin/bash
+cat /tmp/mock_lsusb
+LSUSB_SCRIPT
+chmod +x /usr/local/bin/lsusb
+
+# Start dbus for systemd
+service dbus start 2>/dev/null || true
+
+echo "✅ Raspberry Pi 4 Emulator initialized"
+echo "🎮 Xbox 360 wireless adapter emulated on Bus 001 Device 003"
+echo ""
+echo "Ready for Xbox 360 WiFi Module Emulator testing!"
+EOF
+
+RUN chmod +x /usr/local/bin/pi-emulator-init.sh
+
+# Create entrypoint script
+RUN cat > /docker-entrypoint.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Initialize Pi emulator
+/usr/local/bin/pi-emulator-init.sh
+
+# Switch to pi user and run command
+if [ "$1" = 'bash' ] || [ "$1" = 'sh' ]; then
+    exec gosu pi "$@"
+elif [ $# -eq 0 ]; then
+    echo "🥧 Raspberry Pi 4 Emulator Ready!"
+    echo ""
+    echo "Available commands:"
+    echo "  sudo python3 installer_ui.py     # Run GUI installer"
+    echo "  sudo ./launch_installer.sh       # Launch with all deps"
+    echo "  ./system_status.sh               # Check system status"
+    echo "  sudo ./quick_capture.sh          # Capture USB protocol"
+    echo ""
+    echo "Starting interactive shell as pi user..."
+    exec gosu pi bash
+else
+    exec "$@"
+fi
+EOF
+
+RUN chmod +x /docker-entrypoint.sh
+
+# Install gosu for user switching
+RUN apt-get update && apt-get install -y gosu && apt-get clean
+
+# Set proper permissions
+RUN chown -R pi:pi /opt/xbox360-emulator
+
+EXPOSE 8080 8443
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["bash"]

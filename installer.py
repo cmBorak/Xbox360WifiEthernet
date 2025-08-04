@@ -29,26 +29,8 @@ class XboxInstallerCore:
     """Core installer functionality - works with or without GUI"""
     
     def __init__(self, gui_callback=None):
-        # Determine script directory more robustly
-        try:
-            # Try to get the actual script directory
-            if hasattr(sys, '_MEIPASS'):
-                # Running as PyInstaller bundle
-                self.script_dir = Path(sys._MEIPASS)
-            else:
-                # Running as normal Python script
-                self.script_dir = Path(__file__).parent.resolve()
-            
-            # Ensure the directory exists and is readable
-            if not self.script_dir.exists():
-                # Fallback to current working directory
-                self.script_dir = Path.cwd()
-                
-        except Exception as e:
-            # Ultimate fallback
-            self.script_dir = Path.cwd()
-            print(f"Warning: Could not determine script directory ({e}), using current directory: {self.script_dir}")
-        
+        # Use current working directory as base - much simpler and more reliable
+        self.script_dir = Path.cwd()
         self.gui_callback = gui_callback
         self.system_info = self._detect_system()
         
@@ -363,7 +345,7 @@ Address=192.168.4.1/24
         (self.install_dir / "docs").mkdir(exist_ok=True)
         
         # Copy source files if they exist
-        src_dir = self.script_dir / "src"
+        src_dir = Path("src")
         if src_dir.exists():
             shutil.copytree(src_dir, self.install_dir / "src", dirs_exist_ok=True)
             self._log("Copied source files", "success")
@@ -456,7 +438,7 @@ if __name__ == "__main__":
             (capture_dir / subdir).mkdir(parents=True, exist_ok=True)
         
         # Also create symlink from script directory for compatibility
-        script_capture_dir = self.script_dir / "captures"
+        script_capture_dir = Path("captures")
         if not script_capture_dir.exists():
             try:
                 script_capture_dir.symlink_to(capture_dir)
@@ -469,7 +451,7 @@ if __name__ == "__main__":
         self._log(f"Capture directories created at: {capture_dir}")
         
         # Create USB passthrough script
-        passthrough_script = self.script_dir / "usb_passthrough.py"
+        passthrough_script = Path("usb_passthrough.py")
         with open(passthrough_script, 'w') as f:
             f.write('''#!/usr/bin/env python3
 """
@@ -600,7 +582,7 @@ if __name__ == "__main__":
         self._log("Created USB passthrough monitoring script")
         
         # Create USB analysis script
-        analysis_script = self.script_dir / "analyze_usb_capture.py"
+        analysis_script = Path("analyze_usb_capture.py")
         with open(analysis_script, 'w') as f:
             f.write('''#!/usr/bin/env python3
 """
@@ -745,8 +727,8 @@ WantedBy=multi-user.target
         """Create helper scripts"""
         self._log("Creating helper scripts...")
         
-        # Create system status script
-        status_script = self.script_dir / "system_status.py"
+        # Create system status script in current directory
+        status_script = Path("system_status.py")
         with open(status_script, 'w') as f:
             f.write('''#!/usr/bin/env python3
 """Xbox 360 WiFi Module Emulator - System Status"""
@@ -789,8 +771,8 @@ if __name__ == "__main__":
 ''')
         status_script.chmod(0o755)
         
-        # Create USB capture script
-        capture_script = self.script_dir / "usb_capture.py"
+        # Create USB capture script in current directory
+        capture_script = Path("usb_capture.py")
         with open(capture_script, 'w') as f:
             f.write('''#!/usr/bin/env python3
 """Xbox 360 WiFi Module Emulator - USB Capture"""
@@ -847,8 +829,8 @@ if __name__ == "__main__":
 ''')
         capture_script.chmod(0o755)
         
-        # Create USB passthrough helper script
-        passthrough_helper = self.script_dir / "start_passthrough.py"
+        # Create USB passthrough helper script in current directory
+        passthrough_helper = Path("start_passthrough.py")
         with open(passthrough_helper, 'w') as f:
             f.write('''#!/usr/bin/env python3
 """
@@ -1046,7 +1028,7 @@ if __name__ == "__main__":
         self._log("Created USB passthrough helper script")
         
         # Create capture management script
-        capture_manager = self.script_dir / "manage_captures.py"
+        capture_manager = Path("manage_captures.py")
         with open(capture_manager, 'w') as f:
             f.write('''#!/usr/bin/env python3
 """
@@ -1233,7 +1215,99 @@ if __name__ == "__main__":
         capture_manager.chmod(0o755)
         self._log("Created capture management script")
         
+        # Create debug scripts if they don't exist
+        self._create_debug_scripts()
+        
         self._log("Helper scripts created", "success")
+    
+    def _create_debug_scripts(self):
+        """Create debug and fix scripts if they don't exist"""
+        # Create debug_dwc2.py
+        debug_script = Path("debug_dwc2.py")
+        if not debug_script.exists():
+            self._log("Creating debug_dwc2.py script...")
+            try:
+                # Run the create_debug_scripts.py to create them
+                subprocess.run([sys.executable, "create_debug_scripts.py"], check=True)
+                self._log("Debug scripts created successfully", "success")
+            except Exception as e:
+                self._log(f"Failed to create debug scripts: {e}", "warning")
+                # Create a minimal debug script inline
+                with open(debug_script, 'w') as f:
+                    f.write('''#!/usr/bin/env python3
+"""DWC2 Debug Script - Minimal Version"""
+import subprocess
+from pathlib import Path
+
+print("🔍 DWC2 Debug Check")
+print("=" * 20)
+
+# Check if we're on Pi
+try:
+    with open('/proc/cpuinfo', 'r') as f:
+        if 'Raspberry Pi' in f.read():
+            print("✅ Running on Raspberry Pi")
+        else:
+            print("❌ Not on Raspberry Pi")
+except:
+    print("❓ Cannot determine hardware")
+
+# Check modules
+try:
+    result = subprocess.run(['lsmod'], capture_output=True, text=True)
+    if 'dwc2' in result.stdout:
+        print("✅ dwc2 module loaded")
+    else:
+        print("❌ dwc2 module not loaded")
+        
+    if 'libcomposite' in result.stdout:
+        print("✅ libcomposite module loaded")
+    else:
+        print("❌ libcomposite module not loaded")
+except Exception as e:
+    print(f"❌ Error checking modules: {e}")
+
+# Check USB controllers
+udc_path = Path('/sys/class/udc/')
+if udc_path.exists():
+    udcs = list(udc_path.glob('*'))
+    if udcs:
+        print(f"✅ Found {len(udcs)} USB Device Controllers")
+    else:
+        print("❌ No USB Device Controllers found")
+else:
+    print("❌ /sys/class/udc/ not found")
+
+print("\\nRun 'sudo python3 fix_dwc2.py' to fix issues")
+''')
+                debug_script.chmod(0o755)
+                
+                # Create minimal fix script
+                fix_script = Path("fix_dwc2.py")
+                if not fix_script.exists():
+                    with open(fix_script, 'w') as f:
+                        f.write('''#!/usr/bin/env python3
+"""DWC2 Fix Script - Minimal Version"""
+import os
+import sys
+from pathlib import Path
+
+if os.geteuid() != 0:
+    print("❌ Must run as root: sudo python3 fix_dwc2.py")
+    sys.exit(1)
+
+print("🛠️ DWC2 Fix Script")
+print("=" * 20)
+
+# Check if Bookworm
+is_bookworm = Path('/boot/firmware/config.txt').exists()
+config_path = "/boot/firmware/config.txt" if is_bookworm else "/boot/config.txt"
+
+print(f"📝 Updating {config_path}")
+print("⚠️ Run full installer for comprehensive fix")
+print("💡 This is a minimal fix script")
+''')
+                    fix_script.chmod(0o755)
     
     def _test_installation(self):
         """Test the installation"""
@@ -1300,13 +1374,13 @@ if __name__ == "__main__":
             self._log("Installation completed successfully!", "success")
             
             # Create completion markers
-            completion_marker = self.script_dir / ".installation_complete"
+            completion_marker = Path(".installation_complete")
             completion_marker.write_text(f"Installation completed at {subprocess.run(['date'], capture_output=True, text=True).stdout.strip()}")
             
             # Show completion message and create reboot marker if needed
             if self.system_info['is_pi']:
                 self._log("REBOOT REQUIRED to activate USB gadget functionality", "warning")
-                reboot_marker = self.script_dir / ".reboot_required"
+                reboot_marker = Path(".reboot_required")
                 reboot_marker.write_text("Reboot required for USB gadget mode")
             
             return True
@@ -1721,13 +1795,13 @@ class XboxInstallerGUI:
         def check_thread():
             try:
                 # Check if completion marker exists
-                completion_marker = self.installer.script_dir / ".installation_complete"
+                completion_marker = Path(".installation_complete")
                 if completion_marker.exists():
                     self.installation_complete = True
                     self.queue.put(('update_status', ('install', "✅ Installation Complete")))
                     
                     # Check if reboot is required
-                    reboot_marker = self.installer.script_dir / ".reboot_required"
+                    reboot_marker = Path(".reboot_required")
                     if reboot_marker.exists():
                         self.reboot_required = True
                         self.queue.put(('update_status', ('reboot', "🔄 Reboot Required")))
@@ -1776,7 +1850,7 @@ class XboxInstallerGUI:
                               "Some features may not work until you reboot.\n\n"
                               "Continue?"):
             try:
-                reboot_marker = self.installer.script_dir / ".reboot_required"
+                reboot_marker = Path(".reboot_required")
                 if reboot_marker.exists():
                     reboot_marker.unlink()
                 self.reboot_required = False
@@ -1807,30 +1881,27 @@ class XboxInstallerGUI:
         
         # Basic paths
         self._log_to_output(f"Current working directory: {Path.cwd()}\n", "info")
-        self._log_to_output(f"Script directory: {self.installer.script_dir}\n", "info")
+        self._log_to_output(f"Script directory (same as CWD): {self.installer.script_dir}\n", "info")
         self._log_to_output(f"Script file: {__file__}\n", "info")
         self._log_to_output(f"Python executable: {sys.executable}\n", "info")
         
-        # Check script directory existence
-        if self.installer.script_dir.exists():
-            self._log_to_output("✅ Script directory exists\n", "success")
+        # Check current directory (now script directory)
+        try:
+            self._log_to_output("✅ Using current working directory for all files\n", "success")
             
-            # List all files in script directory
-            try:
-                all_files = list(self.installer.script_dir.iterdir())
-                self._log_to_output(f"Files in script directory ({len(all_files)}):\n", "info")
+            # List all files in current directory
+            all_files = list(Path.cwd().iterdir())
+            self._log_to_output(f"Files in current directory ({len(all_files)}):\n", "info")
                 
-                for file in sorted(all_files):
-                    if file.is_file():
-                        size = file.stat().st_size
-                        self._log_to_output(f"  📄 {file.name} ({size} bytes)\n", "info")
-                    elif file.is_dir():
-                        self._log_to_output(f"  📁 {file.name}/\n", "info")
+            for file in sorted(all_files):
+                if file.is_file():
+                    size = file.stat().st_size
+                    self._log_to_output(f"  📄 {file.name} ({size} bytes)\n", "info")
+                elif file.is_dir():
+                    self._log_to_output(f"  📁 {file.name}/\n", "info")
                         
-            except Exception as e:
-                self._log_to_output(f"❌ Error listing files: {e}\n", "error")
-        else:
-            self._log_to_output("❌ Script directory does not exist!\n", "error")
+        except Exception as e:
+            self._log_to_output(f"❌ Error listing files: {e}\n", "error")
         
         # Check for expected scripts
         expected_scripts = [
@@ -1844,7 +1915,7 @@ class XboxInstallerGUI:
         
         self._log_to_output("\nExpected script files:\n", "info")
         for script in expected_scripts:
-            script_path = self.installer.script_dir / script
+            script_path = Path(script)
             if script_path.exists():
                 self._log_to_output(f"  ✅ {script}\n", "success")
             else:
@@ -1852,8 +1923,8 @@ class XboxInstallerGUI:
         
         # Check installation markers
         self._log_to_output("\nInstallation markers:\n", "info")
-        completion_marker = self.installer.script_dir / ".installation_complete"
-        reboot_marker = self.installer.script_dir / ".reboot_required"
+        completion_marker = Path(".installation_complete")
+        reboot_marker = Path(".reboot_required")
         
         if completion_marker.exists():
             self._log_to_output("  ✅ Installation complete marker exists\n", "success")
@@ -2223,7 +2294,7 @@ class XboxInstallerGUI:
     def _check_status(self):
         """Check system status"""
         try:
-            status_script = self.installer.script_dir / "system_status.py"
+            status_script = Path("system_status.py")
             if status_script.exists():
                 result = subprocess.run([sys.executable, str(status_script)],
                                       capture_output=True, text=True, timeout=10)
@@ -2265,7 +2336,7 @@ class XboxInstallerGUI:
     def _start_capture(self):
         """Start USB capture"""
         try:
-            capture_script = self.installer.script_dir / "usb_capture.py"
+            capture_script = Path("usb_capture.py")
             if capture_script.exists():
                 self._log_to_output("Starting USB capture...\n", "info")
                 result = subprocess.run([sys.executable, str(capture_script)],
@@ -2287,7 +2358,7 @@ class XboxInstallerGUI:
                 self.queue.put(('log', ("🔍 Starting DWC2 Debug Analysis...", 'info')))
                 
                 # Run DWC2 debugger
-                debug_script = self.installer.script_dir / "debug_dwc2.py"
+                debug_script = Path("debug_dwc2.py")
                 if debug_script.exists():
                     result = subprocess.run([sys.executable, str(debug_script)],
                                           capture_output=True, text=True, timeout=30)
@@ -2323,7 +2394,7 @@ class XboxInstallerGUI:
                 self.queue.put(('log', ("🛠️ Starting DWC2 Comprehensive Fix...", 'info')))
                 
                 # Run DWC2 fixer
-                fix_script = self.installer.script_dir / "fix_dwc2.py"
+                fix_script = Path("fix_dwc2.py")
                 if fix_script.exists():
                     # Run with pkexec for GUI sudo
                     result = subprocess.run(['pkexec', sys.executable, str(fix_script)],
@@ -2359,7 +2430,7 @@ class XboxInstallerGUI:
                 self.queue.put(('log', ("📡 Setting up USB Passthrough...", 'info')))
                 
                 # Run passthrough setup
-                passthrough_script = self.installer.script_dir / "start_passthrough.py"
+                passthrough_script = Path("start_passthrough.py")
                 if passthrough_script.exists():
                     result = subprocess.run(['pkexec', sys.executable, str(passthrough_script), '--setup'],
                                           capture_output=True, text=True, timeout=60)
@@ -2462,6 +2533,20 @@ class XboxInstallerGUI:
         """Start the GUI"""
         self.root.mainloop()
 
+def check_and_run_as_root():
+    """Check if running as root, and if not, re-run with sudo"""
+    if os.geteuid() != 0:
+        print("🛡️ This installer requires root privileges for system configuration.")
+        print("   Re-launching with sudo...")
+        try:
+            # Re-run the script with sudo, preserving all arguments
+            cmd = ['sudo', '-E', sys.executable] + sys.argv
+            os.execvpe('sudo', cmd, os.environ)
+        except Exception as e:
+            print(f"❌ Failed to launch with sudo: {e}")
+            print("💡 Please run manually: sudo python3 installer.py")
+            sys.exit(1)
+
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="Xbox 360 WiFi Module Emulator Installer")
@@ -2469,8 +2554,13 @@ def main():
     parser.add_argument('--test', action='store_true', help='Test system compatibility')
     parser.add_argument('--status', action='store_true', help='Check installation status')
     parser.add_argument('--capture', action='store_true', help='Start USB capture')
+    parser.add_argument('--no-sudo', action='store_true', help='Skip automatic sudo check')
     
     args = parser.parse_args()
+    
+    # Check for root privileges unless explicitly skipped or just checking status/testing
+    if not args.no_sudo and not args.status and not args.test:
+        check_and_run_as_root()
     
     # Handle special modes
     if args.test:
@@ -2485,8 +2575,7 @@ def main():
             return 1
     
     if args.status:
-        script_dir = Path(__file__).parent.absolute()
-        status_script = script_dir / "system_status.py"
+        status_script = Path("system_status.py")
         if status_script.exists():
             subprocess.run([sys.executable, str(status_script)])
         else:
@@ -2494,8 +2583,7 @@ def main():
         return 0
     
     if args.capture:
-        script_dir = Path(__file__).parent.absolute()
-        capture_script = script_dir / "usb_capture.py"
+        capture_script = Path("usb_capture.py")
         if capture_script.exists():
             subprocess.run([sys.executable, str(capture_script)])
         else:

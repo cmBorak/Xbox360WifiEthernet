@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xbox 360 WiFi Emulator Installer
+Comment=Install Xbox 360 WiFi Module Emulator with GUI
+Exec=pkexec env DISPLAY=$DISPLAY XAUTHORITY=$XAUTHORITY bash -c 'cd "%k" && python3 installer_ui.py'
+Path=/mnt/c/Users/Chris/Documents/GitHub/PI usb faker/Xbox360WifiEthernet
+Icon=network-wireless
+Terminal=false
+Categories=System;Network;
+StartupNotify=true
+X-Desktop-File-Install-Version=0.23

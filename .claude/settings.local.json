@@ -12,7 +12,10 @@
       "Bash(find:*)",
       "Bash(git --version)",
       "Bash(git add:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git remote get-url:*)"
     ],
     "deny": []
   }

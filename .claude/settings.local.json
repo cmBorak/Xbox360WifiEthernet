@@ -9,7 +9,10 @@
       "Bash(timeout:*)",
       "Bash(ls:*)",
       "Bash(gcc:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git --version)",
+      "Bash(git add:*)",
+      "Bash(cat:*)"
     ],
     "deny": []
   }

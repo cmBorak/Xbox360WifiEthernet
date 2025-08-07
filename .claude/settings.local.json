@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(mkdir:*)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Bash(sudo python3:*)",
+      "Bash(python3:*)",
+      "Bash(./install.sh:*)",
+      "Bash(timeout:*)",
+      "Bash(ls:*)",
+      "Bash(gcc:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

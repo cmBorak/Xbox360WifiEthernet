@@ -1,0 +1,105 @@
+Xbox 360 WiFi Module Emulator - Install Log
+============================================================
+Session started: 2025-08-04 12:24:49
+System: Linux-6.12.34+rpt-rpi-v8-aarch64-with-glibc2.36
+Python: 3.11.2
+Script directory: /home/chris/Desktop/Xbox360WifiEthernet
+============================================================
+
+[12:24:49] [INFO] 📝 Logging to: install_20250804_122449.log
+[12:24:49] [INFO] 🚀 Starting Xbox 360 WiFi Module Emulator Installation...
+[12:24:49] [INFO] ============================================================
+[12:24:49] [INFO] Starting Xbox 360 WiFi Module Emulator installation...
+[12:24:49] [INFO] [Step 1/10] System Check
+[12:24:49] [INFO] Checking system requirements...
+[12:24:49] [INFO] OS: Linux (aarch64)
+[12:24:49] [SUCCESS] Detected: Raspberry Pi 4 Model B Rev 1.2
+[12:24:49] [SUCCESS] System requirements check passed
+[12:24:49] [INFO] [Step 2/10] Install Dependencies
+[12:24:49] [INFO] Installing system dependencies...
+[12:24:56] [SUCCESS] Package list updated
+[12:24:58] [ERROR] Command failed: /usr/bin/python3 -m pip install --upgrade pip
+[12:24:58] [ERROR] Error: WARNING: The directory '/home/chris/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+error: externally-managed-environment
+
+× This environment is externally managed
+╰─> To install Python packages system-wide, try apt install
+    python3-xyz, where xyz is the package you are trying to
+    install.
+    
+    If you wish to install a non-Debian-packaged Python package,
+    create a virtual environment using python3 -m venv path/to/venv.
+    Then use path/to/venv/bin/python and path/to/venv/bin/pip. Make
+    sure you have python3-full installed.
+    
+    For more information visit http://rptl.io/venv
+
+note: If you believe this is a mistake, please contact your Python installation or OS distribution provider. You can override this, at the risk of breaking your Python installation or OS, by passing --break-system-packages.
+hint: See PEP 668 for the detailed specification.
+
+[12:24:58] [WARNING] Some Python packages failed to install
+[12:24:58] [SUCCESS] Dependencies installation completed
+[12:24:58] [INFO] [Step 3/10] Configure USB Gadget
+[12:24:58] [INFO] Configuring USB gadget support...
+[12:24:58] [INFO] Detected Bookworm OS - using /boot/firmware/ paths
+[12:24:58] [INFO] Backed up /boot/firmware/config.txt to /boot/firmware/config.txt.backup.20250804_122458
+[12:24:58] [INFO] Backed up /boot/firmware/cmdline.txt to /boot/firmware/cmdline.txt.backup.20250804_122458
+[12:24:58] [INFO] Updated existing dwc2 overlay with OTG mode for passthrough
+[12:24:58] [INFO] Updated kernel command line with Bookworm compatibility
+[12:24:59] [INFO] Created NetworkManager bypass for USB gadget interface
+[12:24:59] [INFO] Created systemd network configuration for USB gadget
+[12:24:59] [SUCCESS] Loaded libcomposite module
+[12:24:59] [SUCCESS] Loaded dwc2 module
+[12:24:59] [SUCCESS] Loaded usbmon module
+[12:24:59] [SUCCESS] USB gadget configuration completed with Bookworm compatibility
+[12:24:59] [INFO] [Step 4/10] Install Xbox Emulator
+[12:24:59] [INFO] Installing Xbox 360 emulator...
+[12:24:59] [INFO] Created directory: /opt/xbox360-emulator
+[12:24:59] [INFO] Created directory: /etc/xbox360-emulator
+[12:24:59] [INFO] Created directory: /var/log/xbox360-emulator
+[12:24:59] [SUCCESS] Copied source files
+[12:24:59] [SUCCESS] Xbox 360 emulator installation completed
+[12:24:59] [INFO] [Step 5/10] Setup USB Sniffing
+[12:24:59] [INFO] Setting up USB sniffing and passthrough tools...
+[12:25:01] [SUCCESS] Installed usbip
+[12:25:11] [SUCCESS] Installed tcpdump
+[12:25:13] [SUCCESS] Installed wireshark-common
+[12:25:16] [SUCCESS] Installed tshark
+[12:25:18] [SUCCESS] Installed libusb-1.0-0-dev
+[12:25:20] [SUCCESS] Installed libudev-dev
+[12:25:20] [SUCCESS] Loaded usbmon module
+[12:25:20] [SUCCESS] Loaded USB IP modules
+[12:25:20] [INFO] Capture directories created at: /home/chris/Desktop/captures
+[12:25:20] [INFO] Created USB passthrough monitoring script
+[12:25:20] [INFO] Created USB capture analysis script
+[12:25:20] [SUCCESS] USB sniffing and passthrough tools setup completed
+[12:25:20] [INFO] [Step 6/10] Create Services
+[12:25:20] [INFO] Creating systemd service...
+[12:25:21] [SUCCESS] Service enabled for autostart
+[12:25:21] [SUCCESS] Systemd service created
+[12:25:21] [INFO] [Step 7/10] Configure Networking
+[12:25:21] [INFO] Configuring networking...
+[12:25:21] [SUCCESS] Network configuration completed
+[12:25:21] [INFO] [Step 8/10] Create Helper Scripts
+[12:25:21] [INFO] Creating helper scripts...
+[12:25:21] [INFO] Created USB passthrough helper script
+[12:25:21] [INFO] Created capture management script
+[12:25:21] [SUCCESS] Helper scripts created
+[12:25:21] [INFO] [Step 9/10] Test Installation
+[12:25:21] [INFO] Testing installation...
+[12:25:21] [SUCCESS] Emulator file is present and executable
+[12:25:21] [SUCCESS] Service file created successfully
+[12:25:21] [SUCCESS] Python environment test passed
+[12:25:21] [SUCCESS] Installation testing completed
+[12:25:21] [INFO] [Step 10/10] Finalize Setup
+[12:25:21] [INFO] Finalizing installation...
+[12:25:21] [SUCCESS] Installation marker created
+[12:25:21] [SUCCESS] Installation finalized successfully
+[12:25:21] [SUCCESS] Installation completed successfully!
+[12:25:21] [WARNING] REBOOT REQUIRED to activate USB gadget functionality
+[12:25:21] [INFO] ============================================================
+[12:25:21] [SUCCESS] ✅ Installation completed successfully!
+
+============================================================
+Session ended: 2025-08-04 12:25:21
+============================================================

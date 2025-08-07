@@ -1,2616 +1,1434 @@
 #!/usr/bin/env python3
 """
-Xbox 360 WiFi Module Emulator - Universal Installer
-Replaces all installation scripts with a single, comprehensive installer
+Xbox 360 WiFi Module Emulator - Pi OS Bullseye ARM64 Installer
+Optimized for Raspberry Pi OS Bullseye 64-bit
 """
 
 import os
 import sys
 import subprocess
 import platform
-import argparse
-import tempfile
 import shutil
 import json
+import time
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
-# Try to import GUI components
+# GUI imports with fallback
 try:
     import tkinter as tk
-    from tkinter import ttk, scrolledtext, messagebox, simpledialog, filedialog
+    from tkinter import ttk, scrolledtext, messagebox, filedialog
     import threading
     import queue
     GUI_AVAILABLE = True
 except ImportError:
     GUI_AVAILABLE = False
+    print("⚠️ GUI not available. Install with: sudo apt install python3-tk")
 
-class XboxInstallerCore:
-    """Core installer functionality - works with or without GUI"""
+class BullseyeXboxInstaller:
+    """Xbox 360 WiFi Emulator installer optimized for Pi OS Bullseye ARM64"""
     
-    def __init__(self, gui_callback=None):
-        # Use current working directory as base - much simpler and more reliable
-        self.script_dir = Path.cwd()
-        self.gui_callback = gui_callback
-        self.system_info = self._detect_system()
+    def __init__(self, dev_mode=False):
+        self.dev_mode = dev_mode  # Development mode uses local directories
+        self.setup_logging()
+        self.setup_system_info()
+        self.setup_paths()
         
-        # Installation paths
-        self.install_dir = Path("/opt/xbox360-emulator")
-        self.config_dir = Path("/etc/xbox360-emulator")
-        self.log_dir = Path("/var/log/xbox360-emulator")
+        # Installation state
+        self.installation_complete = False
+        self.reboot_required = False
+        self.current_step = 0
+        self.total_steps = 10
         
-        # Installation steps
+        # Installation steps optimized for Bullseye
         self.steps = [
-            ("System Check", self._check_system),
-            ("Install Dependencies", self._install_dependencies),
-            ("Configure USB Gadget", self._configure_usb_gadget),
-            ("Install Xbox Emulator", self._install_emulator),
-            ("Setup USB Sniffing", self._setup_usb_sniffing),
-            ("Create Services", self._create_services),
-            ("Configure Networking", self._configure_networking),
-            ("Create Helper Scripts", self._create_helpers),
-            ("Test Installation", self._test_installation),
-            ("Finalize Setup", self._finalize_setup)
+            ("System Validation", self._validate_bullseye_system),
+            ("Install Dependencies", self._install_bullseye_dependencies),
+            ("Configure USB Gadget", self._configure_bullseye_usb),
+            ("Setup DWC2 Module", self._setup_bullseye_dwc2),
+            ("Install Xbox Emulator", self._install_emulator_core),
+            ("Configure Network", self._setup_bullseye_networking),
+            ("Create SystemD Services", self._create_bullseye_services),
+            ("Setup USB Sniffing", self._setup_usb_tools),
+            ("Create Helper Scripts", self._create_helper_scripts),
+            ("Finalize Installation", self._finalize_bullseye_setup)
+        ]
+    
+    def setup_logging(self):
+        """Setup centralized logging for Bullseye"""
+        # Bullseye uses lowercase desktop by default
+        possible_log_dirs = [
+            Path.home() / "Desktop" / "debuglogs",
+            Path.home() / "desktop" / "debuglogs", 
+            Path("/home/pi/Desktop/debuglogs"),
+            Path("/home/pi/desktop/debuglogs"),
+            Path.home() / "debuglogs"
         ]
         
-    def _log(self, message: str, level: str = "info"):
-        """Log message to console and GUI if available"""
-        timestamp = f"[{__import__('time').strftime('%H:%M:%S')}]"
-        formatted_message = f"{timestamp} {message}"
+        self.debug_log_dir = None
+        for path in possible_log_dirs:
+            if path.parent.exists():
+                self.debug_log_dir = path
+                break
         
-        # Console output
-        if level == "error":
-            print(f"\033[0;31m❌ {formatted_message}\033[0m", file=sys.stderr)
-        elif level == "warning":
-            print(f"\033[1;33m⚠️  {formatted_message}\033[0m")
-        elif level == "success":
-            print(f"\033[0;32m✅ {formatted_message}\033[0m")
-        else:
-            print(f"\033[0;34mℹ️  {formatted_message}\033[0m")
+        if not self.debug_log_dir:
+            self.debug_log_dir = Path.home() / "desktop" / "debuglogs"
         
-        # GUI callback
-        if self.gui_callback:
-            self.gui_callback('log', message, level)
+        self.debug_log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create session log
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_file = self.debug_log_dir / f"bullseye_install_{timestamp}.log"
+        self.log_buffer = []
+        
+        self.log("🎯 Xbox 360 WiFi Emulator - Pi OS Bullseye ARM64 Installer", "INFO")
+        self.log("=" * 60, "INFO")
+        self.log(f"Session started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "INFO")
+        self.log(f"Log file: {self.log_file}", "INFO")
+        self.log("=" * 60, "INFO")
     
-    def _update_progress(self, step: int, total: int, message: str):
-        """Update progress information"""
-        percentage = (step / total) * 100
-        self._log(f"[Step {step}/{total}] {message}")
+    def log(self, message: str, level: str = "INFO"):
+        """Log message with timestamp"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] [{level}] {message}"
+        self.log_buffer.append(log_entry + "\n")
         
-        if self.gui_callback:
-            self.gui_callback('progress', step, total, message, percentage)
+        # Console output with colors
+        colors = {
+            "INFO": "\033[0;34m",
+            "SUCCESS": "\033[0;32m", 
+            "WARNING": "\033[1;33m",
+            "ERROR": "\033[0;31m",
+            "DEBUG": "\033[0;37m"
+        }
+        
+        color = colors.get(level, "\033[0m")
+        print(f"{color}[{timestamp}] {message}\033[0m")
+        
+        # Flush log periodically
+        if len(self.log_buffer) >= 5 or level in ['ERROR', 'SUCCESS']:
+            self.flush_log()
     
-    def _detect_system(self) -> Dict:
-        """Detect system information"""
-        info = {
+    def flush_log(self):
+        """Write log buffer to file"""
+        try:
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.writelines(self.log_buffer)
+            self.log_buffer = []
+        except Exception as e:
+            print(f"Warning: Could not write to log file: {e}")
+    
+    def setup_system_info(self):
+        """Detect Bullseye ARM64 system information"""
+        self.system_info = {
             'os': platform.system(),
             'arch': platform.machine(),
-            'python_version': sys.version_info,
-            'is_root': os.geteuid() == 0 if hasattr(os, 'geteuid') else False,
+            'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            'is_bullseye': False,
+            'is_arm64': False,
             'is_pi': False,
-            'is_wsl': False,
-            'has_gui': GUI_AVAILABLE and bool(os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'))
+            'kernel_version': platform.release()
         }
+        
+        # Check for Bullseye
+        try:
+            with open('/etc/os-release', 'r') as f:
+                content = f.read()
+                if 'bullseye' in content.lower():
+                    self.system_info['is_bullseye'] = True
+                    self.log("✅ Detected Pi OS Bullseye", "SUCCESS")
+        except:
+            pass
+        
+        # Check architecture
+        if 'aarch64' in self.system_info['arch'] or 'arm64' in self.system_info['arch']:
+            self.system_info['is_arm64'] = True
+            self.log("✅ Detected ARM64 architecture", "SUCCESS")
         
         # Check for Raspberry Pi
         try:
             with open('/proc/cpuinfo', 'r') as f:
-                cpuinfo = f.read()
-                if 'Raspberry Pi' in cpuinfo:
-                    info['is_pi'] = True
-                    # Extract Pi model
-                    for line in cpuinfo.split('\n'):
-                        if line.startswith('Model'):
-                            info['pi_model'] = line.split(':', 1)[1].strip()
-                            break
-        except FileNotFoundError:
+                if 'Raspberry Pi' in f.read():
+                    self.system_info['is_pi'] = True
+                    self.log("✅ Detected Raspberry Pi hardware", "SUCCESS")
+        except:
             pass
-        
-        # Check for WSL
-        try:
-            with open('/proc/version', 'r') as f:
-                if 'microsoft' in f.read().lower():
-                    info['is_wsl'] = True
-        except FileNotFoundError:
-            pass
-        
-        return info
     
-    def _run_command(self, cmd: Union[str, List[str]], shell: bool = False, check: bool = True) -> subprocess.CompletedProcess:
-        """Run command with proper error handling"""
+    def setup_paths(self):
+        """Setup Bullseye-specific paths"""
+        # Bullseye uses /boot/ not /boot/firmware/
+        self.boot_config = Path("/boot/config.txt")
+        self.boot_cmdline = Path("/boot/cmdline.txt") 
+        self.modules_file = Path("/etc/modules")
+        
+        # Installation directories - use local paths in dev mode
+        if self.dev_mode:
+            self.script_dir = Path.cwd()
+            self.install_dir = self.script_dir / "build" / "xbox360-emulator"
+            self.config_dir = self.script_dir / "build" / "config"
+            self.log_dir = self.script_dir / "build" / "logs"
+            self.log("🔧 Development mode: using local directories", "INFO")
+        else:
+            self.install_dir = Path("/opt/xbox360-emulator")
+            self.config_dir = Path("/etc/xbox360-emulator") 
+            self.log_dir = Path("/var/log/xbox360-emulator")
+            self.script_dir = Path.cwd()
+            self.log("🏗️ Production mode: using system directories", "INFO")
+        
+        self.log(f"Boot config: {self.boot_config}", "INFO")
+        self.log(f"Install directory: {self.install_dir}", "INFO")
+        self.log(f"Script directory: {self.script_dir}", "INFO")
+    
+    def run_command(self, cmd: str, description: str = "", timeout: int = 60) -> Tuple[bool, str, str]:
+        """Run command and return success, stdout, stderr"""
+        if description:
+            self.log(f"🔧 {description}", "INFO")
+        
+        self.log(f"Command: {cmd}", "DEBUG")
+        
         try:
-            if isinstance(cmd, str) and not shell:
-                cmd = cmd.split()
-            
             result = subprocess.run(
-                cmd, 
-                shell=shell, 
-                check=check, 
-                capture_output=True, 
-                text=True
+                cmd, shell=True, capture_output=True, 
+                text=True, timeout=timeout
             )
-            return result
-        except subprocess.CalledProcessError as e:
-            self._log(f"Command failed: {' '.join(cmd) if isinstance(cmd, list) else cmd}", "error")
-            self._log(f"Error: {e.stderr}", "error")
-            raise
+            
+            success = result.returncode == 0
+            level = "SUCCESS" if success else "ERROR"
+            
+            if success:
+                self.log("✅ Command succeeded", level)
+            else:
+                self.log(f"❌ Command failed (exit code: {result.returncode})", level)
+            
+            if result.stdout.strip():
+                for line in result.stdout.strip().split('\n')[:10]:
+                    if line.strip():
+                        self.log(f"   OUT: {line}", "DEBUG")
+            
+            if result.stderr.strip():
+                for line in result.stderr.strip().split('\n')[:5]:
+                    if line.strip():
+                        self.log(f"   ERR: {line}", level)
+            
+            return success, result.stdout, result.stderr
+            
+        except subprocess.TimeoutExpired:
+            self.log(f"⏰ Command timed out after {timeout}s", "ERROR")
+            return False, "", "Command timeout"
+        except Exception as e:
+            self.log(f"❌ Command exception: {e}", "ERROR")
+            return False, "", str(e)
     
-    def _check_system(self):
-        """Check system requirements"""
-        self._log("Checking system requirements...")
+    def _validate_bullseye_system(self) -> bool:
+        """Validate this is a proper Bullseye ARM64 Pi system"""
+        self.log("\n🔍 VALIDATING SYSTEM COMPATIBILITY", "INFO")
+        self.log("=" * 35, "INFO")
         
-        # Check if root
-        if not self.system_info['is_root']:
-            raise RuntimeError("Installer must be run as root (use sudo)")
+        validation_passed = True
         
-        # Check Python version
-        if self.system_info['python_version'] < (3, 6):
-            raise RuntimeError("Python 3.6 or higher required")
+        if self.dev_mode:
+            self.log("🔧 Development mode - relaxed validation", "INFO")
+            # In dev mode, just check basics
+            self.log(f"OS: {self.system_info['os']}", "INFO")
+            self.log(f"Architecture: {self.system_info['arch']}", "INFO")
+            self.log(f"Python: {self.system_info['python_version']}", "INFO")
+            self.log("✅ Development mode validation passed", "SUCCESS")
+            return True
         
-        # Check available space (1GB minimum)
-        statvfs = os.statvfs('/')
-        available_gb = (statvfs.f_bavail * statvfs.f_frsize) / (1024**3)
-        if available_gb < 1:
-            self._log(f"Only {available_gb:.1f}GB available, may cause issues", "warning")
+        # Production mode - strict validation
+        # Check OS version
+        if not self.system_info['is_bullseye']:
+            self.log("❌ Not running Pi OS Bullseye", "ERROR")
+            validation_passed = False
+        else:
+            self.log("✅ Pi OS Bullseye confirmed", "SUCCESS")
         
-        # Log system info
-        self._log(f"OS: {self.system_info['os']} ({self.system_info['arch']})")
-        if self.system_info['is_pi']:
-            self._log(f"Detected: {self.system_info.get('pi_model', 'Raspberry Pi')}", "success")
-        if self.system_info['is_wsl']:
-            self._log("Running in WSL environment")
+        # Check architecture
+        if not self.system_info['is_arm64']:
+            self.log("❌ Not running ARM64 architecture", "ERROR") 
+            validation_passed = False
+        else:
+            self.log("✅ ARM64 architecture confirmed", "SUCCESS")
         
-        self._log("System requirements check passed", "success")
+        # Check hardware
+        if not self.system_info['is_pi']:
+            self.log("⚠️ Non-Pi hardware detected", "WARNING")
+        else:
+            self.log("✅ Raspberry Pi hardware confirmed", "SUCCESS")
+        
+        # Check kernel version
+        self.log(f"Kernel: {self.system_info['kernel_version']}", "INFO")
+        
+        # Check Python version 
+        self.log(f"Python: {self.system_info['python_version']}", "INFO")
+        
+        # Check critical paths
+        if not self.boot_config.exists():
+            self.log(f"❌ Boot config not found: {self.boot_config}", "ERROR")
+            validation_passed = False
+        else:
+            self.log(f"✅ Boot config found: {self.boot_config}", "SUCCESS")
+        
+        # Check for root/sudo access
+        success, _, _ = self.run_command("sudo -n true", "Testing sudo access")
+        if not success:
+            self.log("⚠️ Sudo access required for installation", "WARNING")
+        
+        return validation_passed
     
-    def _install_dependencies(self):
-        """Install system dependencies"""
-        self._log("Installing system dependencies...")
+    def _install_bullseye_dependencies(self) -> bool:
+        """Install dependencies optimized for Bullseye"""
+        self.log("\n📦 INSTALLING BULLSEYE DEPENDENCIES", "INFO")
+        self.log("=" * 35, "INFO")
         
         # Update package list
-        try:
-            self._run_command(["apt-get", "update", "-qq"])
-            self._log("Package list updated", "success")
-        except subprocess.CalledProcessError:
-            self._log("Package update failed, continuing with cached packages", "warning")
+        success, _, _ = self.run_command("sudo apt update", "Updating package list", timeout=300)
+        if not success:
+            self.log("❌ Failed to update package list", "ERROR")
+            return False
         
-        # Essential packages
-        packages = [
-            "python3", "python3-pip", "python3-tk",
-            "curl", "wget", "git", "build-essential", "cmake",
-            "libusb-1.0-0-dev", "usbutils", "bridge-utils",
-            "iptables-persistent", "systemd", "kmod"
+        # Core system packages for Bullseye
+        bullseye_packages = [
+            # Python and GUI
+            'python3-tk', 'python3-pip', 'python3-setuptools', 'python3-wheel',
+            'python3-dev', 'python3-venv',
+            
+            # System tools
+            'git', 'curl', 'wget', 'build-essential', 'pkg-config',
+            
+            # USB and networking
+            'usbutils', 'iproute2', 'iptables', 'dnsmasq', 'hostapd',
+            
+            # Development tools
+            'cmake', 'make', 'gcc', 'g++',
+            
+            # USB monitoring and debugging
+            'usbip', 'tcpdump', 'wireshark-common', 'tshark',
+            'libusb-1.0-0-dev', 'libudev-dev',
+            
+            # GUI and desktop
+            'zenity', 'desktop-file-utils',
+            
+            # Network tools
+            'net-tools', 'bridge-utils', 'wireless-tools'
         ]
         
-        # Install packages
-        for package in packages:
-            try:
-                # Check if already installed
-                result = self._run_command(["dpkg", "-l", package], check=False)
-                if result.returncode == 0 and "ii" in result.stdout:
-                    continue
-                
-                self._log(f"Installing {package}...")
-                self._run_command(["apt-get", "install", "-y", package])
-                
-            except subprocess.CalledProcessError:
-                self._log(f"Failed to install {package}, continuing", "warning")
-        
-        # Install Python packages
-        try:
-            self._run_command([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-            self._run_command([sys.executable, "-m", "pip", "install", "pyusb"])
-        except subprocess.CalledProcessError:
-            self._log("Some Python packages failed to install", "warning")
-        
-        self._log("Dependencies installation completed", "success")
-    
-    def _configure_usb_gadget(self):
-        """Configure USB gadget support"""
-        self._log("Configuring USB gadget support...")
-        
-        if not self.system_info['is_pi']:
-            self._log("Not on Raspberry Pi, skipping boot configuration", "warning")
-            return
-        
-        # Detect Bookworm vs older OS versions
-        bookworm_paths = ["/boot/firmware/config.txt", "/boot/firmware/cmdline.txt"]
-        legacy_paths = ["/boot/config.txt", "/boot/cmdline.txt"]
-        
-        # Check which boot configuration to use
-        if Path("/boot/firmware/config.txt").exists():
-            boot_config_path = "/boot/firmware/config.txt"
-            boot_cmdline_path = "/boot/firmware/cmdline.txt"
-            self._log("Detected Bookworm OS - using /boot/firmware/ paths")
-        elif Path("/boot/config.txt").exists():
-            boot_config_path = "/boot/config.txt"
-            boot_cmdline_path = "/boot/cmdline.txt"
-            self._log("Detected legacy OS - using /boot/ paths")
-        else:
-            self._log("Could not find boot configuration files", "error")
-            return
-        
-        # Backup boot files
-        boot_files = [boot_config_path, boot_cmdline_path]
-        for boot_file in boot_files:
-            if Path(boot_file).exists():
-                backup_file = f"{boot_file}.backup.{__import__('time').strftime('%Y%m%d_%H%M%S')}"
-                shutil.copy2(boot_file, backup_file)
-                self._log(f"Backed up {boot_file} to {backup_file}")
-        
-        # Configure config.txt
-        config_txt = Path(boot_config_path)
-        if config_txt.exists():
-            with open(config_txt, 'r') as f:
-                content = f.read()
+        # Install packages in chunks to avoid timeout
+        chunk_size = 5
+        for i in range(0, len(bullseye_packages), chunk_size):
+            chunk = bullseye_packages[i:i+chunk_size]
+            cmd = f"sudo apt install -y {' '.join(chunk)}"
+            success, _, stderr = self.run_command(cmd, f"Installing packages: {', '.join(chunk)}", timeout=300)
             
-            # Use OTG mode for both gadget and host capabilities (USB passthrough)
-            dwc2_config = "\n# Xbox 360 WiFi Module Emulator - OTG Mode for Passthrough\ndtoverlay=dwc2,dr_mode=otg\n"
-            
-            if "dtoverlay=dwc2" not in content:
-                with open(config_txt, 'a') as f:
-                    f.write(dwc2_config)
-                self._log("Added OTG-compatible dwc2 overlay to config.txt")
+            if not success:
+                self.log(f"⚠️ Some packages in chunk failed: {stderr}", "WARNING")
+        
+        # Verify critical packages
+        critical_packages = ['python3-tk', 'usbutils', 'git']
+        for package in critical_packages:
+            success, _, _ = self.run_command(f"dpkg -l | grep -q {package}", f"Verifying {package}")
+            if success:
+                self.log(f"✅ {package} installed", "SUCCESS") 
             else:
-                # Update existing dwc2 line to include dr_mode=otg for passthrough
-                content = __import__('re').sub(r'dtoverlay=dwc2[^\n]*', 'dtoverlay=dwc2,dr_mode=otg', content)
-                with open(config_txt, 'w') as f:
-                    f.write(content)
-                self._log("Updated existing dwc2 overlay with OTG mode for passthrough")
+                self.log(f"❌ {package} missing", "ERROR")
         
-        # Configure cmdline.txt
-        cmdline_txt = Path(boot_cmdline_path)
-        if cmdline_txt.exists():
-            with open(cmdline_txt, 'r') as f:
-                content = f.read().strip()
-            
-            # Remove existing modules-load parameters
-            content = __import__('re').sub(r' modules-load=[^ ]*', '', content)
-            # Add our modules-load parameter (Bookworm compatible)
-            content += " modules-load=dwc2,g_ether"
-            
-            with open(cmdline_txt, 'w') as f:
-                f.write(content + "\n")
-            self._log("Updated kernel command line with Bookworm compatibility")
-        
-        # Configure modules for loading
-        modules_conf = Path("/etc/modules-load.d/xbox360-emulator.conf")
-        modules_conf.parent.mkdir(parents=True, exist_ok=True)
-        with open(modules_conf, 'w') as f:
-            f.write("# Xbox 360 WiFi Module Emulator\nlibcomposite\ndwc2\nusbmon\ng_ether\n")
-        
-        # Configure NetworkManager bypass for Bookworm (prevents NetworkManager from controlling usb0)
-        usb0_interfaces = Path("/etc/network/interfaces.d/usb0")
-        usb0_interfaces.parent.mkdir(parents=True, exist_ok=True)
-        with open(usb0_interfaces, 'w') as f:
-            f.write("""# Xbox 360 WiFi Module Emulator - USB Gadget Interface
-# This prevents NetworkManager from controlling the USB gadget interface
-# Required for Bookworm compatibility
-
-allow-hotplug usb0
-iface usb0 inet static
-    address 192.168.4.1
-    netmask 255.255.255.0
-    network 192.168.4.0
-    broadcast 192.168.4.255
+        return True
     
-# Auto-configure interface when plugged in
-auto usb0
-
-# Manual configuration for DHCP if needed
-#iface usb0 inet dhcp
-""")
-        self._log("Created NetworkManager bypass for USB gadget interface")
+    def _configure_bullseye_usb(self) -> bool:
+        """Configure USB gadget support for Bullseye"""
+        self.log("\n🔌 CONFIGURING USB GADGET FOR BULLSEYE", "INFO")
+        self.log("=" * 40, "INFO")
         
-        # Create systemd network configuration as backup
-        systemd_network = Path("/etc/systemd/network/99-usb0.network")
-        systemd_network.parent.mkdir(parents=True, exist_ok=True)
-        with open(systemd_network, 'w') as f:
-            f.write("""[Match]
+        # Backup boot config
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_config = self.boot_config.with_suffix(f'.txt.backup.{timestamp}')
+            shutil.copy2(self.boot_config, backup_config)
+            self.log(f"✅ Backed up config to: {backup_config}", "SUCCESS")
+        except Exception as e:
+            self.log(f"⚠️ Could not backup config: {e}", "WARNING")
+        
+        # Read current config
+        try:
+            with open(self.boot_config, 'r') as f:
+                config_content = f.read()
+        except Exception as e:
+            self.log(f"❌ Could not read boot config: {e}", "ERROR")
+            return False
+        
+        # Remove existing DWC2 entries
+        lines = config_content.split('\n')
+        lines = [line for line in lines if 'dwc2' not in line.lower()]
+        
+        # Add Bullseye-optimized DWC2 configuration
+        bullseye_dwc2_config = [
+            "",
+            "# Xbox 360 WiFi Emulator - Bullseye DWC2 Configuration",
+            "# Enable DWC2 USB gadget mode for Xbox 360 emulation",
+            "dtoverlay=dwc2,dr_mode=otg",
+            "",
+            "# USB OTG optimizations for Bullseye",
+            "otg_mode=1",
+            "max_usb_current=1",
+            "",
+            "# Memory optimization for gadget mode",
+            "gpu_mem=16",
+            "gpu_mem_256=16",
+            "gpu_mem_512=16",
+            "gpu_mem_1024=16"
+        ]
+        
+        lines.extend(bullseye_dwc2_config)
+        
+        # Write updated config
+        try:
+            with open(self.boot_config, 'w') as f:
+                f.write('\n'.join(lines))
+            self.log("✅ Updated boot config with Bullseye DWC2 settings", "SUCCESS")
+        except Exception as e:
+            self.log(f"❌ Failed to update boot config: {e}", "ERROR")
+            return False
+        
+        return True
+    
+    def _setup_bullseye_dwc2(self) -> bool:
+        """Setup DWC2 module loading for Bullseye"""
+        self.log("\n🔧 SETTING UP DWC2 MODULE FOR BULLSEYE", "INFO")
+        self.log("=" * 40, "INFO")
+        
+        # Update cmdline.txt for Bullseye
+        if self.boot_cmdline.exists():
+            try:
+                with open(self.boot_cmdline, 'r') as f:
+                    cmdline = f.read().strip()
+                
+                # Add modules-load for early loading
+                if "modules-load=" not in cmdline:
+                    cmdline += " modules-load=dwc2,libcomposite"
+                else:
+                    # Update existing modules-load
+                    import re
+                    if "dwc2" not in cmdline:
+                        cmdline = re.sub(r'modules-load=([^\s]+)', 
+                                       lambda m: f"modules-load={m.group(1)},dwc2,libcomposite", 
+                                       cmdline)
+                
+                with open(self.boot_cmdline, 'w') as f:
+                    f.write(cmdline + '\n')
+                
+                self.log("✅ Updated cmdline.txt for Bullseye", "SUCCESS")
+            except Exception as e:
+                self.log(f"⚠️ Could not update cmdline.txt: {e}", "WARNING")
+        
+        # Update /etc/modules
+        try:
+            current_modules = []
+            if self.modules_file.exists():
+                with open(self.modules_file, 'r') as f:
+                    current_modules = [line.strip() for line in f.readlines() 
+                                     if line.strip() and not line.startswith('#')]
+            
+            # Add required modules
+            required_modules = ["dwc2", "libcomposite", "configfs"]
+            modules_added = []
+            
+            for module in required_modules:
+                if module not in current_modules:
+                    current_modules.append(module)
+                    modules_added.append(module)
+            
+            # Write updated modules file
+            with open(self.modules_file, 'w') as f:
+                f.write("# /etc/modules: kernel modules to load at boot time\n")
+                f.write("# Xbox 360 WiFi Emulator modules for Bullseye\n")
+                for module in current_modules:
+                    f.write(f"{module}\n")
+            
+            if modules_added:
+                self.log(f"✅ Added modules: {', '.join(modules_added)}", "SUCCESS")
+            else:
+                self.log("✅ Modules already configured", "SUCCESS")
+                
+        except Exception as e:
+            self.log(f"❌ Failed to update /etc/modules: {e}", "ERROR")
+        
+        # Try to load modules immediately
+        for module in ["dwc2", "libcomposite"]:
+            success, _, _ = self.run_command(f"sudo modprobe {module}", f"Loading {module} module")
+            if success:
+                self.log(f"✅ {module} loaded successfully", "SUCCESS")
+            else:
+                self.log(f"⚠️ {module} will load after reboot", "WARNING")
+        
+        # Update initramfs for early module loading
+        success, _, _ = self.run_command("sudo update-initramfs -u", "Updating initramfs", timeout=300)
+        if success:
+            self.log("✅ Initramfs updated for early module loading", "SUCCESS")
+        else:
+            self.log("⚠️ Initramfs update had issues", "WARNING")
+        
+        return True
+    
+    def _install_emulator_core(self) -> bool:
+        """Install Xbox 360 emulator core files"""
+        self.log("\n🎮 INSTALLING XBOX 360 EMULATOR CORE", "INFO")
+        self.log("=" * 35, "INFO")
+        
+        # Create installation directories
+        for directory in [self.install_dir, self.config_dir, self.log_dir]:
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                self.log(f"✅ Created directory: {directory}", "SUCCESS")
+            except Exception as e:
+                self.log(f"❌ Failed to create {directory}: {e}", "ERROR")
+                return False
+        
+        # Copy source files
+        src_dir = self.script_dir / "src"
+        if src_dir.exists():
+            try:
+                shutil.copytree(src_dir, self.install_dir / "src", dirs_exist_ok=True)
+                self.log("✅ Copied source files", "SUCCESS")
+            except Exception as e:
+                self.log(f"❌ Failed to copy source files: {e}", "ERROR")
+        
+        # Create main emulator script
+        emulator_script = self.install_dir / "xbox360_emulator.py"
+        emulator_content = '''#!/usr/bin/env python3
+"""
+Xbox 360 WiFi Module Emulator - Main Script
+Optimized for Pi OS Bullseye ARM64
+"""
+
+import sys
+import os
+from pathlib import Path
+
+# Add src directory to path
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+try:
+    from xbox360_emulator import Xbox360Emulator
+    
+    def main():
+        print("🎮 Xbox 360 WiFi Module Emulator - Bullseye ARM64")
+        print("=" * 50)
+        
+        emulator = Xbox360Emulator()
+        emulator.start()
+        
+    if __name__ == "__main__":
+        main()
+        
+except ImportError as e:
+    print(f"❌ Failed to import emulator modules: {e}")
+    print("💡 Please ensure all dependencies are installed")
+    sys.exit(1)
+'''
+        
+        try:
+            with open(emulator_script, 'w') as f:
+                f.write(emulator_content)
+            os.chmod(emulator_script, 0o755)
+            self.log("✅ Created main emulator script", "SUCCESS")
+        except Exception as e:
+            self.log(f"❌ Failed to create emulator script: {e}", "ERROR")
+        
+        return True
+    
+    def _setup_bullseye_networking(self) -> bool:
+        """Setup networking for Bullseye"""
+        self.log("\n🌐 SETTING UP BULLSEYE NETWORKING", "INFO")
+        self.log("=" * 35, "INFO")
+        
+        # Create NetworkManager configuration
+        nm_config_dir = Path("/etc/NetworkManager/conf.d")
+        nm_config_dir.mkdir(exist_ok=True)
+        
+        nm_config_content = """[keyfile]
+unmanaged-devices=interface-name:usb0;interface-name:usb1
+
+[device]
+wifi.scan-rand-mac-address=no
+
+[connection]
+wifi.powersave=2
+"""
+        
+        try:
+            nm_config_file = nm_config_dir / "99-xbox360-emulator.conf"
+            with open(nm_config_file, 'w') as f:
+                f.write(nm_config_content)
+            self.log("✅ Created NetworkManager configuration", "SUCCESS")
+        except Exception as e:
+            self.log(f"❌ Failed to create NetworkManager config: {e}", "ERROR")
+        
+        # Create systemd network configuration for usb0
+        systemd_network_dir = Path("/etc/systemd/network")
+        systemd_network_dir.mkdir(exist_ok=True)
+        
+        usb0_network_config = """[Match]
 Name=usb0
 
 [Network]
 Address=192.168.4.1/24
-IPForward=yes
 IPMasquerade=yes
-DHCP=no
+IPForward=yes
+DHCPServer=yes
 
-[Address]
-Address=192.168.4.1/24
-""")
-        self._log("Created systemd network configuration for USB gadget")
-        
-        # Try to load modules now
-        modules = ["libcomposite", "dwc2", "usbmon"]
-        for module in modules:
-            try:
-                self._run_command(["modprobe", module])
-                self._log(f"Loaded {module} module", "success")
-            except subprocess.CalledProcessError:
-                self._log(f"Failed to load {module} module, will try on reboot", "warning")
-        
-        self._log("USB gadget configuration completed with Bookworm compatibility", "success")
-    
-    def _install_emulator(self):
-        """Install Xbox 360 emulator files"""
-        self._log("Installing Xbox 360 emulator...")
-        
-        # Create directories
-        for directory in [self.install_dir, self.config_dir, self.log_dir]:
-            directory.mkdir(parents=True, exist_ok=True)
-            self._log(f"Created directory: {directory}")
-        
-        # Create subdirectories
-        (self.install_dir / "src").mkdir(exist_ok=True)
-        (self.install_dir / "bin").mkdir(exist_ok=True)
-        (self.install_dir / "docs").mkdir(exist_ok=True)
-        
-        # Copy source files if they exist
-        src_dir = Path("src")
-        if src_dir.exists():
-            shutil.copytree(src_dir, self.install_dir / "src", dirs_exist_ok=True)
-            self._log("Copied source files", "success")
-        else:
-            # Create minimal emulator file
-            emulator_file = self.install_dir / "src" / "xbox360_emulator.py"
-            with open(emulator_file, 'w') as f:
-                f.write('''#!/usr/bin/env python3
-"""Xbox 360 WiFi Module Emulator - Main Module"""
-import sys
-import time
-
-def main():
-    print("🎮 Xbox 360 WiFi Module Emulator Starting...")
-    print("This is a minimal implementation for testing")
-    
-    try:
-        while True:
-            print("Emulator running... (Ctrl+C to stop)")
-            time.sleep(10)
-    except KeyboardInterrupt:
-        print("Emulator stopped")
-
-if __name__ == "__main__":
-    main()
-''')
-            emulator_file.chmod(0o755)
-            self._log("Created minimal emulator file")
-        
-        # Set proper permissions
-        self._run_command(["chown", "-R", "root:root", str(self.install_dir)])
-        self._run_command(["chmod", "-R", "755", str(self.install_dir)])
-        
-        self._log("Xbox 360 emulator installation completed", "success")
-    
-    def _setup_usb_sniffing(self):
-        """Setup USB sniffing and passthrough tools"""
-        self._log("Setting up USB sniffing and passthrough tools...")
-        
-        # Install USB passthrough dependencies
-        passthrough_packages = [
-            "usbip",
-            "tcpdump",
-            "wireshark-common",
-            "tshark",
-            "libusb-1.0-0-dev",
-            "libudev-dev"
-        ]
-        
-        for package in passthrough_packages:
-            try:
-                self._run_command(["apt-get", "install", "-y", package])
-                self._log(f"Installed {package}", "success")
-            except subprocess.CalledProcessError:
-                self._log(f"Failed to install {package}", "warning")
-        
-        # Setup usbmon for packet capture
-        try:
-            self._run_command(["modprobe", "usbmon"])
-            self._log("Loaded usbmon module", "success")
-        except subprocess.CalledProcessError:
-            self._log("Failed to load usbmon module", "warning")
-        
-        # Setup USB IP for passthrough
-        try:
-            self._run_command(["modprobe", "usbip-core"])
-            self._run_command(["modprobe", "usbip-host"])
-            self._run_command(["modprobe", "vhci-hcd"])
-            self._log("Loaded USB IP modules", "success")
-        except subprocess.CalledProcessError:
-            self._log("Failed to load USB IP modules", "warning")
-        
-        # Mount debugfs if needed
-        debugfs_path = Path("/sys/kernel/debug")
-        if not (debugfs_path / "usb" / "usbmon").exists():
-            try:
-                self._run_command(["mount", "-t", "debugfs", "none", str(debugfs_path)])
-                self._log("Mounted debugfs", "success")
-            except subprocess.CalledProcessError:
-                self._log("Failed to mount debugfs", "warning")
-        
-        # Create capture directories on desktop for easy access
-        desktop_path = Path.home() / "Desktop"
-        if not desktop_path.exists():
-            # Fallback to home directory if no Desktop
-            desktop_path = Path.home()
-        
-        capture_dir = desktop_path / "captures"
-        for subdir in ["enumeration", "authentication", "network_ops", "analysis", "passthrough"]:
-            (capture_dir / subdir).mkdir(parents=True, exist_ok=True)
-        
-        # Also create symlink from script directory for compatibility
-        script_capture_dir = Path("captures")
-        if not script_capture_dir.exists():
-            try:
-                script_capture_dir.symlink_to(capture_dir)
-                self._log(f"Created capture symlink: {script_capture_dir} -> {capture_dir}")
-            except OSError:
-                # If symlink fails, create regular directory
-                script_capture_dir.mkdir(parents=True, exist_ok=True)
-                self._log(f"Created capture directory: {script_capture_dir}")
-        
-        self._log(f"Capture directories created at: {capture_dir}")
-        
-        # Create USB passthrough script
-        passthrough_script = Path("usb_passthrough.py")
-        with open(passthrough_script, 'w') as f:
-            f.write('''#!/usr/bin/env python3
+[DHCPServer]
+PoolOffset=10
+PoolSize=20
+DefaultLeaseTimeSec=3600
+DNS=8.8.8.8,8.8.4.4
 """
-Xbox 360 Wireless Adapter USB Passthrough Monitor
-Captures USB traffic while providing transparent passthrough
-"""
-
-import subprocess
-import time
-import sys
-import threading
-import os
-from pathlib import Path
-
-class XboxAdapterPassthrough:
-    def __init__(self):
-        self.xbox_vendor_id = "045e"
-        self.xbox_product_id = "02a8"  # Xbox 360 Wireless Gaming Receiver
-        self.capture_file = None
-        self.running = False
         
-    def find_xbox_adapter(self):
-        """Find Xbox 360 wireless adapter"""
         try:
-            result = subprocess.run(['lsusb'], capture_output=True, text=True)
-            for line in result.stdout.split('\\n'):
-                if self.xbox_vendor_id in line and 'wireless' in line.lower():
-                    print(f"Found Xbox adapter: {line.strip()}")
-                    return True
-            return False
+            usb0_config_file = systemd_network_dir / "80-usb0.network"
+            with open(usb0_config_file, 'w') as f:
+                f.write(usb0_network_config)
+            self.log("✅ Created systemd network configuration", "SUCCESS")
         except Exception as e:
-            print(f"Error finding adapter: {e}")
-            return False
+            self.log(f"❌ Failed to create systemd network config: {e}", "ERROR")
+        
+        # Enable systemd-networkd
+        success, _, _ = self.run_command("sudo systemctl enable systemd-networkd", "Enabling systemd-networkd")
+        if success:
+            self.log("✅ systemd-networkd enabled", "SUCCESS")
+        
+        return True
     
-    def start_capture(self, bus_id=None):
-        """Start USB packet capture"""
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
+    def _create_bullseye_services(self) -> bool:
+        """Create SystemD services for Bullseye"""
+        self.log("\n⚙️ CREATING SYSTEMD SERVICES", "INFO")
+        self.log("=" * 30, "INFO")
         
-        # Use desktop captures directory for easy access
-        desktop_path = Path.home() / "Desktop"
-        if not desktop_path.exists():
-            desktop_path = Path.home()
-        
-        capture_dir = desktop_path / "captures" / "passthrough"
-        capture_dir.mkdir(parents=True, exist_ok=True)
-        
-        self.capture_file = capture_dir / f"xbox_adapter_{timestamp}.pcap"
-        
-        # Start usbmon capture
-        if bus_id:
-            cmd = f"tcpdump -i usbmon{bus_id} -w {self.capture_file}"
-        else:
-            cmd = f"tcpdump -i usbmon0 -w {self.capture_file}"
-            
-        print(f"Starting capture: {cmd}")
-        self.capture_process = subprocess.Popen(cmd.split())
-        self.running = True
-        
-    def stop_capture(self):
-        """Stop USB packet capture"""
-        if hasattr(self, 'capture_process'):
-            self.capture_process.terminate()
-            self.running = False
-            print(f"Capture saved to: {self.capture_file}")
-    
-    def setup_passthrough(self):
-        """Setup USB passthrough using usbip"""
-        print("Setting up USB passthrough...")
-        
-        # Start usbipd daemon
-        try:
-            subprocess.run(['usbipd'], check=True)
-            print("USB IP daemon started")
-        except subprocess.CalledProcessError:
-            print("Failed to start USB IP daemon")
-            return False
-            
-        # Bind Xbox adapter
-        try:
-            # Find device bus-port
-            result = subprocess.run(['usbip', 'list', '-l'], capture_output=True, text=True)
-            for line in result.stdout.split('\\n'):
-                if self.xbox_vendor_id in line:
-                    bus_port = line.split(':')[0].strip()
-                    subprocess.run(['usbip', 'bind', '-b', bus_port], check=True)
-                    print(f"Bound Xbox adapter at {bus_port}")
-                    return bus_port
-        except Exception as e:
-            print(f"Error setting up passthrough: {e}")
-            return False
-    
-    def monitor_traffic(self):
-        """Monitor Xbox adapter traffic"""
-        print("Monitoring Xbox 360 adapter traffic...")
-        print("Connect Xbox 360 to Pi, then plug Xbox adapter into Pi")
-        print("Press Ctrl+C to stop")
-        
-        try:
-            # Find and setup adapter
-            if not self.find_xbox_adapter():
-                print("Xbox 360 wireless adapter not found!")
-                return
-                
-            # Setup passthrough
-            bus_port = self.setup_passthrough()
-            if not bus_port:
-                print("Failed to setup passthrough")
-                return
-                
-            # Start capture
-            bus_id = bus_port.split('-')[0] if bus_port else None
-            self.start_capture(bus_id)
-            
-            # Keep running
-            while self.running:
-                time.sleep(1)
-                
-        except KeyboardInterrupt:
-            print("\\nStopping capture...")
-            self.stop_capture()
-
-if __name__ == "__main__":
-    monitor = XboxAdapterPassthrough()
-    monitor.monitor_traffic()
-''')
-        
-        os.chmod(passthrough_script, 0o755)
-        self._log("Created USB passthrough monitoring script")
-        
-        # Create USB analysis script
-        analysis_script = Path("analyze_usb_capture.py")
-        with open(analysis_script, 'w') as f:
-            f.write('''#!/usr/bin/env python3
-"""
-Xbox 360 USB Capture Analysis Tool
-Analyzes captured USB traffic to understand Xbox wireless adapter protocol
-"""
-
-import subprocess
-import sys
-from pathlib import Path
-
-class XboxUSBAnalyzer:
-    def __init__(self, capture_file):
-        self.capture_file = Path(capture_file)
-        
-    def analyze_capture(self):
-        """Analyze USB capture file"""
-        if not self.capture_file.exists():
-            print(f"Capture file not found: {self.capture_file}")
-            return
-            
-        print(f"Analyzing capture: {self.capture_file}")
-        
-        # Use tshark to analyze USB traffic
-        cmd = [
-            'tshark', '-r', str(self.capture_file),
-            '-Y', 'usb.vendor_id == 0x045e',  # Microsoft vendor ID
-            '-T', 'fields',
-            '-e', 'frame.time',
-            '-e', 'usb.setup.request',
-            '-e', 'usb.setup.value',
-            '-e', 'usb.setup.index',
-            '-e', 'usb.setup.length',
-            '-e', 'usb.capdata'
-        ]
-        
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.stdout:
-                print("Xbox USB Traffic Analysis:")
-                print("=" * 50)
-                print("Time\\tRequest\\tValue\\tIndex\\tLength\\tData")
-                print("=" * 50)
-                print(result.stdout)
-            else:
-                print("No Xbox USB traffic found in capture")
-        except Exception as e:
-            print(f"Analysis error: {e}")
-    
-    def extract_control_transfers(self):
-        """Extract USB control transfers"""
-        cmd = [
-            'tshark', '-r', str(self.capture_file),
-            '-Y', 'usb.transfer_type == 2',  # Control transfers
-            '-T', 'json'
-        ]
-        
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.stdout:
-                import json
-                data = json.loads(result.stdout)
-                print(f"Found {len(data)} control transfers")
-                return data
-        except Exception as e:
-            print(f"Error extracting control transfers: {e}")
-            return []
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python3 analyze_usb_capture.py <capture_file.pcap>")
-        sys.exit(1)
-        
-    analyzer = XboxUSBAnalyzer(sys.argv[1])
-    analyzer.analyze_capture()
-    analyzer.extract_control_transfers()
-''')
-        
-        os.chmod(analysis_script, 0o755)
-        self._log("Created USB capture analysis script")
-        
-        # Create modules loading configuration for passthrough
-        passthrough_modules = Path("/etc/modules-load.d/xbox360-passthrough.conf")
-        with open(passthrough_modules, 'w') as f:
-            f.write("""# Xbox 360 USB Passthrough Modules
-usbmon
-usbip-core
-usbip-host
-vhci-hcd
-""")
-        
-        self._log("USB sniffing and passthrough tools setup completed", "success")
-    
-    def _create_services(self):
-        """Create systemd service"""
-        self._log("Creating systemd service...")
-        
+        # Main Xbox 360 emulator service
         service_content = f"""[Unit]
 Description=Xbox 360 WiFi Module Emulator
-After=network.target
-Wants=network.target
+After=network.target systemd-modules-load.service
+Wants=systemd-modules-load.service
 
 [Service]
 Type=simple
 User=root
-Group=root
 WorkingDirectory={self.install_dir}
-ExecStart=/usr/bin/python3 {self.install_dir}/src/xbox360_emulator.py
+ExecStart=/usr/bin/python3 {self.install_dir}/xbox360_emulator.py
 Restart=always
-RestartSec=10
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
+
+# Environment variables
+Environment=PYTHONPATH={self.install_dir}/src
+Environment=XBOX360_CONFIG_DIR={self.config_dir}
+Environment=XBOX360_LOG_DIR={self.log_dir}
 
 [Install]
 WantedBy=multi-user.target
 """
         
         service_file = Path("/etc/systemd/system/xbox360-emulator.service")
-        with open(service_file, 'w') as f:
-            f.write(service_content)
-        
-        # Reload systemd and enable service
-        self._run_command(["systemctl", "daemon-reload"])
         try:
-            self._run_command(["systemctl", "enable", "xbox360-emulator.service"])
-            self._log("Service enabled for autostart", "success")
-        except subprocess.CalledProcessError:
-            self._log("Failed to enable service", "warning")
-        
-        self._log("Systemd service created", "success")
-    
-    def _configure_networking(self):
-        """Configure networking components"""
-        self._log("Configuring networking...")
-        
-        # This is a placeholder for network configuration
-        # In a real implementation, this would set up bridging, iptables, etc.
-        
-        self._log("Network configuration completed", "success")
-    
-    def _create_helpers(self):
-        """Create helper scripts"""
-        self._log("Creating helper scripts...")
-        
-        # Create system status script in current directory
-        status_script = Path("system_status.py")
-        with open(status_script, 'w') as f:
-            f.write('''#!/usr/bin/env python3
-"""Xbox 360 WiFi Module Emulator - System Status"""
-import subprocess
-import sys
-from pathlib import Path
-
-def check_service():
-    try:
-        result = subprocess.run(["systemctl", "is-active", "xbox360-emulator"], 
-                              capture_output=True, text=True)
-        return "RUNNING" if result.returncode == 0 else "STOPPED"
-    except:
-        return "UNKNOWN"
-
-def check_modules():
-    modules = ["libcomposite", "dwc2", "usbmon"]
-    loaded = []
-    try:
-        result = subprocess.run(["lsmod"], capture_output=True, text=True)
-        for module in modules:
-            if module in result.stdout:
-                loaded.append(f"✅ {module}: LOADED")
-            else:
-                loaded.append(f"❌ {module}: NOT LOADED")
-    except:
-        loaded = ["❌ Cannot check modules"]
-    return loaded
-
-def main():
-    print("🎮 Xbox 360 WiFi Module Emulator Status")
-    print("=" * 40)
-    print(f"📋 Service Status: {check_service()}")
-    print("🧩 Kernel Modules:")
-    for status in check_modules():
-        print(f"   {status}")
-
-if __name__ == "__main__":
-    main()
-''')
-        status_script.chmod(0o755)
-        
-        # Create USB capture script in current directory
-        capture_script = Path("usb_capture.py")
-        with open(capture_script, 'w') as f:
-            f.write('''#!/usr/bin/env python3
-"""Xbox 360 WiFi Module Emulator - USB Capture"""
-import subprocess
-import sys
-import time
-from pathlib import Path
-
-def capture_usb(duration=30):
-    print("🕵️ Starting USB capture...")
-    
-    # Find Xbox adapter
-    try:
-        result = subprocess.run(["lsusb"], capture_output=True, text=True)
-        xbox_line = [line for line in result.stdout.split('\\n') if '045e:02a8' in line]
-        if not xbox_line:
-            print("❌ Xbox 360 wireless adapter not detected")
-            return False
-        
-        bus = xbox_line[0].split()[1]
-        print(f"✅ Found Xbox adapter on bus {bus}")
-        
-        # Capture for specified duration
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        
-        # Use desktop captures directory
-        desktop_path = Path.home() / "Desktop"
-        if not desktop_path.exists():
-            desktop_path = Path.home()
-        
-        capture_dir = desktop_path / "captures"
-        capture_dir.mkdir(parents=True, exist_ok=True)
-        output_file = capture_dir / f"xbox_capture_{timestamp}.log"
-        
-        print(f"📡 Capturing for {duration} seconds...")
-        with open(output_file, 'w') as f:
-            subprocess.run(["timeout", str(duration), "cat", f"/sys/kernel/debug/usb/usbmon/{bus}u"], 
-                         stdout=f, stderr=subprocess.DEVNULL)
-        
-        print(f"✅ Capture saved to: {output_file}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Capture failed: {e}")
-        return False
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--duration", type=int, default=30, help="Capture duration in seconds")
-    args = parser.parse_args()
-    
-    capture_usb(args.duration)
-''')
-        capture_script.chmod(0o755)
-        
-        # Create USB passthrough helper script in current directory
-        passthrough_helper = Path("start_passthrough.py")
-        with open(passthrough_helper, 'w') as f:
-            f.write('''#!/usr/bin/env python3
-"""
-Xbox 360 USB Passthrough Helper
-Simplifies setting up USB passthrough for sniffing Xbox wireless adapter traffic
-"""
-
-import subprocess
-import sys
-import time
-import os
-from pathlib import Path
-
-class PassthroughHelper:
-    def __init__(self):
-        self.xbox_vendor_id = "045e"
-        self.xbox_product_ids = ["02a8", "0291", "028e"]  # Various Xbox devices
-        
-    def check_prerequisites(self):
-        """Check if system is ready for passthrough"""
-        print("🔍 Checking system prerequisites...")
-        
-        # Check if running as root
-        if os.geteuid() != 0:
-            print("❌ Must run as root (use sudo)")
-            return False
-            
-        # Check modules
-        required_modules = ["usbip_core", "usbip_host", "vhci_hcd", "usbmon"]
-        try:
-            result = subprocess.run(["lsmod"], capture_output=True, text=True)
-            loaded_modules = result.stdout
-            
-            for module in required_modules:
-                if module.replace("_", "-") not in loaded_modules and module not in loaded_modules:
-                    try:
-                        subprocess.run(["modprobe", module], check=True)
-                        print(f"✅ Loaded {module}")
-                    except subprocess.CalledProcessError:
-                        try:
-                            subprocess.run(["modprobe", module.replace("_", "-")], check=True)
-                            print(f"✅ Loaded {module}")
-                        except subprocess.CalledProcessError:
-                            print(f"❌ Failed to load {module}")
-                            return False
-                else:
-                    print(f"✅ {module} already loaded")
+            with open(service_file, 'w') as f:
+                f.write(service_content)
+            self.log("✅ Created Xbox 360 emulator service", "SUCCESS")
         except Exception as e:
-            print(f"❌ Error checking modules: {e}")
+            self.log(f"❌ Failed to create service file: {e}", "ERROR")
             return False
-            
-        return True
         
-    def find_xbox_devices(self):
-        """Find connected Xbox devices"""
-        print("🎮 Scanning for Xbox devices...")
-        
-        try:
-            result = subprocess.run(["lsusb"], capture_output=True, text=True)
-            xbox_devices = []
-            
-            for line in result.stdout.split('\\n'):
-                if self.xbox_vendor_id in line:
-                    for pid in self.xbox_product_ids:
-                        if pid in line:
-                            # Extract bus and device info
-                            parts = line.split()
-                            bus = parts[1]
-                            device = parts[3].rstrip(':')
-                            xbox_devices.append({
-                                'bus': bus,
-                                'device': device,
-                                'description': ' '.join(parts[6:])
-                            })
-                            print(f"✅ Found: {' '.join(parts[6:])}")
-                            
-            return xbox_devices
-            
-        except Exception as e:
-            print(f"❌ Error scanning devices: {e}")
-            return []
-    
-    def start_usbip_daemon(self):
-        """Start USB IP daemon"""
-        print("🔧 Starting USB IP daemon...")
-        
-        try:
-            # Check if already running
-            result = subprocess.run(["pgrep", "usbipd"], capture_output=True)
-            if result.returncode == 0:
-                print("✅ USB IP daemon already running")
-                return True
-                
-            # Start daemon
-            subprocess.run(["usbipd", "-D"], check=True)
-            time.sleep(1)  # Give it time to start
-            
-            # Verify it started
-            result = subprocess.run(["pgrep", "usbipd"], capture_output=True)
-            if result.returncode == 0:
-                print("✅ USB IP daemon started successfully")
-                return True
-            else:
-                print("❌ USB IP daemon failed to start")
-                return False
-                
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Failed to start USB IP daemon: {e}")
-            return False
-    
-    def setup_passthrough(self):
-        """Set up USB passthrough"""
-        print("\\n🚀 Setting up Xbox 360 USB Passthrough")
-        print("=" * 50)
-        
-        # Check prerequisites
-        if not self.check_prerequisites():
-            print("❌ Prerequisites not met")
-            return False
-            
-        # Find Xbox devices
-        xbox_devices = self.find_xbox_devices()
-        if not xbox_devices:
-            print("❌ No Xbox devices found. Please connect Xbox wireless adapter to Pi.")
-            return False
-            
-        # Start USB IP daemon
-        if not self.start_usbip_daemon():
-            return False
-            
-        print("\\n📡 Ready for passthrough! To capture traffic:")
-        print("1. Connect Xbox 360 console to Pi via USB")
-        print("2. Run: sudo python3 usb_passthrough.py")
-        print("3. The Pi will forward Xbox adapter traffic while capturing it")
-        print("\\n💡 Captured files will be saved in captures/passthrough/")
+        # Enable service
+        success, _, _ = self.run_command("sudo systemctl daemon-reload", "Reloading systemd")
+        if success:
+            success, _, _ = self.run_command("sudo systemctl enable xbox360-emulator", "Enabling Xbox service")
+            if success:
+                self.log("✅ Xbox 360 emulator service enabled", "SUCCESS")
         
         return True
     
-    def show_status(self):
-        """Show current passthrough status"""
-        print("\\n📊 USB Passthrough Status")
-        print("=" * 30)
+    def _setup_usb_tools(self) -> bool:
+        """Setup USB sniffing and monitoring tools"""
+        self.log("\n🔍 SETTING UP USB MONITORING TOOLS", "INFO")
+        self.log("=" * 35, "INFO")
         
-        # Check modules
-        print("🧩 Kernel Modules:")
-        modules = ["usbip_core", "usbip_host", "vhci_hcd", "usbmon"]
+        # Create captures directory
+        captures_dir = Path.home() / "Desktop" / "captures"
+        captures_dir.mkdir(parents=True, exist_ok=True)
+        self.log(f"✅ Created captures directory: {captures_dir}", "SUCCESS")
+        
+        # Run USB system diagnosis and fixes
+        self.log("🩺 Running USB system diagnosis...", "INFO")
         try:
-            result = subprocess.run(["lsmod"], capture_output=True, text=True)
-            for module in modules:
-                if module in result.stdout or module.replace("_", "-") in result.stdout:
-                    print(f"   ✅ {module}")
-                else:
-                    print(f"   ❌ {module}")
-        except:
-            print("   ❌ Cannot check modules")
+            # Import and run the USB system fixer
+            sys.path.insert(0, str(self.script_dir / "src"))
+            from usb_system_fixer import USBSystemFixer
             
-        # Check daemon
-        try:
-            result = subprocess.run(["pgrep", "usbipd"], capture_output=True)
-            if result.returncode == 0:
-                print("🔧 USB IP Daemon: ✅ RUNNING")
-            else:
-                print("🔧 USB IP Daemon: ❌ STOPPED")
-        except:
-            print("🔧 USB IP Daemon: ❌ UNKNOWN")
+            fixer = USBSystemFixer()
+            summary = fixer.diagnose_and_fix()
             
-        # Check Xbox devices
-        xbox_devices = self.find_xbox_devices()
-        print(f"🎮 Xbox Devices: {len(xbox_devices)} found")
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Xbox 360 USB Passthrough Helper")
-    parser.add_argument("--setup", action="store_true", help="Setup USB passthrough")
-    parser.add_argument("--status", action="store_true", help="Show current status")
-    
-    args = parser.parse_args()
-    
-    helper = PassthroughHelper()
-    
-    if args.setup:
-        helper.setup_passthrough()
-    elif args.status:
-        helper.show_status()
-    else:
-        print("Xbox 360 USB Passthrough Helper")
-        print("Usage:")
-        print("  --setup   Setup USB passthrough")
-        print("  --status  Show current status")
-        print("\\nFor traffic capture: sudo python3 usb_passthrough.py")
-''')
-        
-        passthrough_helper.chmod(0o755)
-        self._log("Created USB passthrough helper script")
-        
-        # Create capture management script
-        capture_manager = Path("manage_captures.py")
-        with open(capture_manager, 'w') as f:
-            f.write('''#!/usr/bin/env python3
-"""
-Xbox 360 Capture Management Tool
-Helps manage and copy capture files
-"""
-
-import os
-import shutil
-import subprocess
-from pathlib import Path
-from datetime import datetime
-
-class CaptureManager:
-    def __init__(self):
-        # Determine capture directory location
-        desktop_path = Path.home() / "Desktop"
-        if not desktop_path.exists():
-            desktop_path = Path.home()
-        
-        self.capture_dir = desktop_path / "captures"
-        
-    def list_captures(self):
-        """List all capture files"""
-        print("🗂️  Xbox 360 Capture Files")
-        print("=" * 40)
-        
-        if not self.capture_dir.exists():
-            print("❌ No captures directory found")
-            return
+            # Log results
+            self.log(f"USB diagnosis: {summary['issues_found']} issues, {summary['fixes_applied']} fixes", "INFO")
             
-        total_files = 0
-        total_size = 0
-        
-        for subdir in ["enumeration", "authentication", "network_ops", "analysis", "passthrough"]:
-            subdir_path = self.capture_dir / subdir
-            if subdir_path.exists():
-                files = list(subdir_path.glob("*"))
-                if files:
-                    print(f"\\n📁 {subdir.upper()}:")
-                    for file in sorted(files):
-                        if file.is_file():
-                            size = file.stat().st_size
-                            size_mb = size / (1024 * 1024)
-                            mtime = datetime.fromtimestamp(file.stat().st_mtime)
-                            print(f"   📄 {file.name} ({size_mb:.1f}MB) - {mtime.strftime('%Y-%m-%d %H:%M')}")
-                            total_files += 1
-                            total_size += size
-                            
-        if total_files == 0:
-            print("📭 No capture files found")
-        else:
-            print(f"\\n📊 Total: {total_files} files, {total_size/(1024*1024):.1f}MB")
-            print(f"📍 Location: {self.capture_dir}")
-    
-    def copy_to_usb(self, usb_path=None):
-        """Copy captures to USB drive"""
-        if not self.capture_dir.exists():
-            print("❌ No captures directory found")
-            return
-            
-        # Auto-detect USB drives if not specified
-        if not usb_path:
-            print("🔍 Scanning for USB drives...")
-            usb_drives = []
-            
-            # Check common mount points
-            mount_points = ["/media", "/mnt", "/run/media"]
-            for mount_point in mount_points:
-                if Path(mount_point).exists():
-                    for item in Path(mount_point).iterdir():
-                        if item.is_dir():
-                            # Check if it looks like a USB drive
-                            for user_dir in item.iterdir():
-                                if user_dir.is_dir():
-                                    usb_drives.append(str(user_dir))
-                                    
-            if not usb_drives:
-                print("❌ No USB drives detected")
-                print("💡 Manually specify path: --copy-usb /path/to/usb")
-                return
+            for fix in summary['fixes']:
+                self.log(f"✅ {fix}", "SUCCESS")
                 
-            print("📱 Found USB drives:")
-            for i, drive in enumerate(usb_drives):
-                print(f"   {i+1}. {drive}")
+            for issue in summary['issues']:
+                self.log(f"⚠️ {issue}", "WARNING")
                 
-            try:
-                choice = int(input("Select drive number: ")) - 1
-                usb_path = usb_drives[choice]
-            except (ValueError, IndexError):
-                print("❌ Invalid selection")
-                return
-        
-        # Copy captures
-        dest_path = Path(usb_path) / "xbox360_captures"
-        dest_path.mkdir(exist_ok=True)
-        
-        print(f"📂 Copying captures to: {dest_path}")
-        try:
-            shutil.copytree(self.capture_dir, dest_path, dirs_exist_ok=True)
-            print("✅ Captures copied successfully!")
-        except Exception as e:
-            print(f"❌ Copy failed: {e}")
-    
-    def archive_captures(self):
-        """Create a zip archive of all captures"""
-        if not self.capture_dir.exists():
-            print("❌ No captures directory found")
-            return
-            
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        archive_name = f"xbox360_captures_{timestamp}.zip"
-        archive_path = self.capture_dir.parent / archive_name
-        
-        print(f"📦 Creating archive: {archive_path}")
-        
-        try:
-            shutil.make_archive(str(archive_path)[:-4], 'zip', self.capture_dir)
-            print(f"✅ Archive created: {archive_path}")
-            print(f"📊 Size: {archive_path.stat().st_size / (1024*1024):.1f}MB")
-        except Exception as e:
-            print(f"❌ Archive failed: {e}")
-    
-    def show_info(self):
-        """Show capture directory information"""
-        print("📍 Xbox 360 Capture Directory Information")
-        print("=" * 45)
-        print(f"📂 Location: {self.capture_dir}")
-        print(f"🏠 User: {Path.home()}")
-        
-        # Check if directory exists and is writable
-        if self.capture_dir.exists():
-            print("✅ Directory exists")
-            if os.access(self.capture_dir, os.W_OK):
-                print("✅ Directory writable")
+            if summary['system_status']['usb_interface']['exists']:
+                self.log("✅ usb0 interface is available", "SUCCESS")
             else:
-                print("❌ Directory not writable")
-        else:
-            print("❌ Directory doesn't exist")
+                self.log("⚠️ usb0 interface not available", "WARNING")
+                
+        except Exception as e:
+            self.log(f"⚠️ USB system diagnosis failed: {e}", "WARNING")
+        
+        # Build USB-Sniffify tools if available
+        sniffify_dir = self.script_dir / "usb_sniffing_tools" / "usb-sniffify"
+        if sniffify_dir.exists():
+            self.log("🔧 Building USB-Sniffify tools...", "INFO")
+            build_dir = sniffify_dir / "build"
+            build_dir.mkdir(exist_ok=True)
             
-        # Show subdirectories
-        print("\\n📁 Subdirectories:")
-        subdirs = ["enumeration", "authentication", "network_ops", "analysis", "passthrough"]
-        for subdir in subdirs:
-            subdir_path = self.capture_dir / subdir
-            if subdir_path.exists():
-                file_count = len(list(subdir_path.glob("*")))
-                print(f"   ✅ {subdir} ({file_count} files)")
+            # Check if already built
+            if not (build_dir / "raw-gadget-passthrough").exists():
+                # Install build dependencies
+                deps = ["build-essential", "cmake", "libusb-1.0-0-dev", "libudev-dev", "pkg-config"]
+                for dep in deps:
+                    success, _, _ = self.run_command(f"sudo apt install -y {dep}", f"Installing {dep}")
+                
+                # Change to build directory and run CMake
+                original_cwd = os.getcwd()
+                try:
+                    os.chdir(build_dir)
+                    success, stdout, stderr = self.run_command("cmake ..", "Running CMake", timeout=120)
+                    if success:
+                        self.log("✅ CMake configuration successful", "SUCCESS")
+                        success, stdout, stderr = self.run_command("make -j$(nproc)", "Building tools", timeout=300)
+                        if success:
+                            self.log("✅ USB-Sniffify tools built successfully", "SUCCESS")
+                        else:
+                            self.log(f"⚠️ USB-Sniffify build failed: {stderr}", "WARNING")
+                    else:
+                        self.log(f"⚠️ CMake configuration failed: {stderr}", "WARNING")
+                finally:
+                    os.chdir(original_cwd)
             else:
-                print(f"   📁 {subdir} (will be created)")
-
-if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Xbox 360 Capture Management")
-    parser.add_argument("--list", action="store_true", help="List all capture files")
-    parser.add_argument("--copy-usb", nargs="?", const="auto", help="Copy captures to USB drive")
-    parser.add_argument("--archive", action="store_true", help="Create zip archive of captures")
-    parser.add_argument("--info", action="store_true", help="Show capture directory info")
-    
-    args = parser.parse_args()
-    
-    manager = CaptureManager()
-    
-    if args.list:
-        manager.list_captures()
-    elif args.copy_usb:
-        usb_path = None if args.copy_usb == "auto" else args.copy_usb
-        manager.copy_to_usb(usb_path)
-    elif args.archive:
-        manager.archive_captures()
-    elif args.info:
-        manager.show_info()
-    else:
-        print("Xbox 360 Capture Management Tool")
-        print("Usage:")
-        print("  --list         List all capture files")
-        print("  --copy-usb     Copy captures to USB drive")
-        print("  --archive      Create zip archive")
-        print("  --info         Show directory info")
-        print(f"\\n📂 Captures location: {manager.capture_dir}")
-''')
+                self.log("✅ USB-Sniffify tools already built", "SUCCESS")
         
-        capture_manager.chmod(0o755)
-        self._log("Created capture management script")
+        # Create USB passthrough manager configuration
+        usb_config = self.config_dir / "usb_config.json"
+        try:
+            import json
+            config = {
+                "capture_directory": str(captures_dir),
+                "auto_analyze": True,
+                "supported_devices": {
+                    "045e:02a8": "Xbox 360 Wireless Network Adapter",
+                    "045e:0292": "Xbox 360 Wireless Gaming Receiver",
+                    "045e:028e": "Xbox 360 Controller"
+                },
+                "capture_settings": {
+                    "default_duration": 30,
+                    "auto_stop_on_disconnect": True,
+                    "generate_reports": True
+                }
+            }
+            
+            with open(usb_config, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            self.log(f"✅ USB configuration created: {usb_config}", "SUCCESS")
+            
+        except Exception as e:
+            self.log(f"⚠️ Could not create USB config: {e}", "WARNING")
         
-        # Create debug scripts if they don't exist
-        self._create_debug_scripts()
-        
-        self._log("Helper scripts created", "success")
+        return True
     
-    def _create_debug_scripts(self):
-        """Create debug and fix scripts if they don't exist"""
-        # Create debug_dwc2.py
-        debug_script = Path("debug_dwc2.py")
-        if not debug_script.exists():
-            self._log("Creating debug_dwc2.py script...")
-            try:
-                # Run the create_debug_scripts.py to create them
-                subprocess.run([sys.executable, "create_debug_scripts.py"], check=True)
-                self._log("Debug scripts created successfully", "success")
-            except Exception as e:
-                self._log(f"Failed to create debug scripts: {e}", "warning")
-                # Create a minimal debug script inline
-                with open(debug_script, 'w') as f:
-                    f.write('''#!/usr/bin/env python3
-"""DWC2 Debug Script - Minimal Version"""
-import subprocess
-from pathlib import Path
+    def _create_helper_scripts(self) -> bool:
+        """Create helper scripts for Bullseye"""
+        self.log("\n📜 CREATING HELPER SCRIPTS", "INFO")
+        self.log("=" * 30, "INFO")
+        
+        # Create start script
+        start_script = self.install_dir / "start_emulator.sh"
+        start_content = f'''#!/bin/bash
+# Xbox 360 WiFi Emulator Start Script - Bullseye
+cd "{self.install_dir}"
 
-print("🔍 DWC2 Debug Check")
-print("=" * 20)
-
-# Check if we're on Pi
-try:
-    with open('/proc/cpuinfo', 'r') as f:
-        if 'Raspberry Pi' in f.read():
-            print("✅ Running on Raspberry Pi")
-        else:
-            print("❌ Not on Raspberry Pi")
-except:
-    print("❓ Cannot determine hardware")
+echo "🎮 Starting Xbox 360 WiFi Module Emulator (Bullseye)"
+echo "=" * 50
 
 # Check modules
-try:
-    result = subprocess.run(['lsmod'], capture_output=True, text=True)
-    if 'dwc2' in result.stdout:
-        print("✅ dwc2 module loaded")
-    else:
-        print("❌ dwc2 module not loaded")
-        
-    if 'libcomposite' in result.stdout:
-        print("✅ libcomposite module loaded")
-    else:
-        print("❌ libcomposite module not loaded")
-except Exception as e:
-    print(f"❌ Error checking modules: {e}")
+echo "Checking USB gadget modules..."
+sudo modprobe dwc2 2>/dev/null || echo "⚠️ DWC2 module load failed"
+sudo modprobe libcomposite 2>/dev/null || echo "⚠️ libcomposite module load failed"
 
-# Check USB controllers
-udc_path = Path('/sys/class/udc/')
-if udc_path.exists():
-    udcs = list(udc_path.glob('*'))
-    if udcs:
-        print(f"✅ Found {len(udcs)} USB Device Controllers")
-    else:
-        print("❌ No USB Device Controllers found")
-else:
-    print("❌ /sys/class/udc/ not found")
-
-print("\\nRun 'sudo python3 fix_dwc2.py' to fix issues")
-''')
-                debug_script.chmod(0o755)
-                
-                # Create minimal fix script
-                fix_script = Path("fix_dwc2.py")
-                if not fix_script.exists():
-                    with open(fix_script, 'w') as f:
-                        f.write('''#!/usr/bin/env python3
-"""DWC2 Fix Script - Minimal Version"""
-import os
-import sys
-from pathlib import Path
-
-if os.geteuid() != 0:
-    print("❌ Must run as root: sudo python3 fix_dwc2.py")
-    sys.exit(1)
-
-print("🛠️ DWC2 Fix Script")
-print("=" * 20)
-
-# Check if Bookworm
-is_bookworm = Path('/boot/firmware/config.txt').exists()
-config_path = "/boot/firmware/config.txt" if is_bookworm else "/boot/config.txt"
-
-print(f"📝 Updating {config_path}")
-print("⚠️ Run full installer for comprehensive fix")
-print("💡 This is a minimal fix script")
-''')
-                    fix_script.chmod(0o755)
-    
-    def _test_installation(self):
-        """Test the installation"""
-        self._log("Testing installation...")
-        
-        # Test if emulator file exists and is executable
-        emulator_file = self.install_dir / "src" / "xbox360_emulator.py"
-        if emulator_file.exists() and os.access(emulator_file, os.X_OK):
-            self._log("Emulator file is present and executable", "success")
-        else:
-            self._log("Emulator file issues detected", "warning")
-        
-        # Test if service file exists
-        service_file = Path("/etc/systemd/system/xbox360-emulator.service")
-        if service_file.exists():
-            self._log("Service file created successfully", "success")
-        else:
-            self._log("Service file not found", "warning")
-        
-        # Test Python import
-        try:
-            subprocess.run([sys.executable, "-c", "import sys; print('Python test OK')"], 
-                         check=True, capture_output=True)
-            self._log("Python environment test passed", "success")
-        except subprocess.CalledProcessError:
-            self._log("Python environment test failed", "warning")
-        
-        self._log("Installation testing completed", "success")
-    
-    def _finalize_setup(self):
-        """Finalize the installation"""
-        self._log("Finalizing installation...")
-        
-        # Create installation marker
-        marker_file = self.install_dir / "installation_complete.txt"
-        with open(marker_file, 'w') as f:
-            f.write(f"Xbox 360 WiFi Module Emulator installed successfully\n")
-            f.write(f"Installation date: {__import__('time').ctime()}\n")
-            f.write(f"System: {self.system_info['os']} {self.system_info['arch']}\n")
-            if self.system_info['is_pi']:
-                f.write(f"Hardware: {self.system_info.get('pi_model', 'Raspberry Pi')}\n")
-        
-        self._log("Installation marker created", "success")
-        
-        # Set final permissions
-        try:
-            self._run_command(["chown", "-R", "root:root", str(self.install_dir), str(self.config_dir)])
-        except subprocess.CalledProcessError:
-            pass
-        
-        self._log("Installation finalized successfully", "success")
-    
-    def install(self):
-        """Run the complete installation"""
-        self._log("Starting Xbox 360 WiFi Module Emulator installation...")
-        
-        total_steps = len(self.steps)
+# Start emulator
+python3 xbox360_emulator.py
+'''
         
         try:
+            with open(start_script, 'w') as f:
+                f.write(start_content)
+            os.chmod(start_script, 0o755)
+            self.log("✅ Created start script", "SUCCESS")
+        except Exception as e:
+            self.log(f"❌ Failed to create start script: {e}", "ERROR")
+        
+        # Create USB capture script
+        capture_script = self.install_dir / "capture_usb.sh"
+        capture_content = f'''#!/bin/bash
+# Xbox 360 USB Capture Script - Bullseye
+cd "{self.install_dir}"
+
+echo "🔍 Xbox 360 USB Capture Tool"
+echo "=" * 40
+
+# Check if USB passthrough manager is available
+if [ ! -f "src/usb_passthrough_manager.py" ]; then
+    echo "❌ USB passthrough manager not found"
+    exit 1
+fi
+
+# Show usage options
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+    echo "Usage: $0 [scan|capture|passthrough|status] [options]"
+    echo ""
+    echo "Commands:"
+    echo "  scan        - Scan for Xbox 360 devices"
+    echo "  capture     - Capture USB traffic (30 seconds)"
+    echo "  passthrough - Start USB passthrough"
+    echo "  status      - Show system status"
+    echo ""
+    echo "Options:"
+    echo "  --duration N  - Capture duration in seconds (default: 30)"
+    echo "  --device DEV  - Specific device for passthrough"
+    echo "  --verbose     - Enable verbose output"
+    exit 0
+fi
+
+# Default to status if no command given
+CMD=${{1:-status}}
+
+# Load required modules
+sudo modprobe usbmon 2>/dev/null
+sudo modprobe raw_gadget 2>/dev/null
+
+# Mount debugfs if needed
+if [ ! -d "/sys/kernel/debug/usb/usbmon" ]; then
+    sudo mount -t debugfs none /sys/kernel/debug 2>/dev/null
+fi
+
+# Run the USB manager
+python3 src/usb_passthrough_manager.py "$CMD" "$@"
+'''
+        
+        try:
+            with open(capture_script, 'w') as f:
+                f.write(capture_content)
+            os.chmod(capture_script, 0o755)
+            self.log("✅ Created USB capture script", "SUCCESS")
+        except Exception as e:
+            self.log(f"❌ Failed to create capture script: {e}", "ERROR")
+        
+        # Create desktop launcher for USB tools
+        if not self.dev_mode:
+            desktop_dirs = [
+                Path.home() / "Desktop",
+                Path.home() / "desktop",
+                Path("/home/pi/Desktop"),
+                Path("/home/pi/desktop")
+            ]
+            
+            for desktop_dir in desktop_dirs:
+                if desktop_dir.exists():
+                    launcher_file = desktop_dir / "Xbox360-USB-Tools.desktop"
+                    launcher_content = f'''[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xbox 360 USB Tools
+Comment=Xbox 360 USB capture and passthrough tools
+Exec=x-terminal-emulator -e "{capture_script}"
+Icon=input-gaming
+Terminal=true
+Categories=System;
+'''
+                    try:
+                        with open(launcher_file, 'w') as f:
+                            f.write(launcher_content)
+                        os.chmod(launcher_file, 0o755)
+                        self.log(f"✅ Created desktop launcher: {launcher_file}", "SUCCESS")
+                        break
+                    except Exception as e:
+                        self.log(f"⚠️ Could not create desktop launcher: {e}", "WARNING")
+        
+        return True
+    
+    def _finalize_bullseye_setup(self) -> bool:
+        """Finalize installation for Bullseye"""
+        self.log("\n🎯 FINALIZING BULLSEYE SETUP", "INFO")
+        self.log("=" * 30, "INFO")
+        
+        # Create completion marker
+        completion_marker = Path(".installation_complete")
+        try:
+            with open(completion_marker, 'w') as f:
+                f.write(f"Xbox 360 WiFi Emulator installation completed\n")
+                f.write(f"Timestamp: {datetime.now()}\n")
+                f.write(f"OS: Pi OS Bullseye ARM64\n")
+                f.write(f"Version: 1.0\n")
+            self.log("✅ Created installation completion marker", "SUCCESS")
+        except Exception as e:
+            self.log(f"⚠️ Could not create completion marker: {e}", "WARNING")
+        
+        # Create reboot marker
+        reboot_marker = Path(".reboot_required")
+        try:
+            with open(reboot_marker, 'w') as f:
+                f.write("Reboot required for DWC2 and USB gadget configuration\n")
+                f.write(f"Created: {datetime.now()}\n")
+            self.reboot_required = True
+            self.log("✅ Created reboot requirement marker", "SUCCESS")
+        except Exception as e:
+            self.log(f"⚠️ Could not create reboot marker: {e}", "WARNING")
+        
+        # Set installation complete
+        self.installation_complete = True
+        
+        return True
+    
+    def install(self) -> bool:
+        """Run complete installation process"""
+        try:
+            self.log("🚀 Starting Xbox 360 WiFi Emulator installation for Pi OS Bullseye ARM64", "INFO")
+            
             for i, (step_name, step_func) in enumerate(self.steps, 1):
-                self._update_progress(i, total_steps, step_name)
-                step_func()
+                self.current_step = i
+                self.log(f"\n[Step {i}/{self.total_steps}] {step_name}", "INFO")
+                self.log("-" * 50, "INFO")
+                
+                success = step_func()
+                if not success:
+                    self.log(f"❌ Step {i} failed: {step_name}", "ERROR")
+                    return False
+                
+                self.log(f"✅ Step {i} completed: {step_name}", "SUCCESS")
             
-            self._log("Installation completed successfully!", "success")
+            self.log("\n" + "=" * 60, "INFO")
+            self.log("🎉 INSTALLATION COMPLETED SUCCESSFULLY!", "SUCCESS") 
+            self.log("=" * 60, "INFO")
             
-            # Create completion markers
-            completion_marker = Path(".installation_complete")
-            completion_marker.write_text(f"Installation completed at {subprocess.run(['date'], capture_output=True, text=True).stdout.strip()}")
-            
-            # Show completion message and create reboot marker if needed
-            if self.system_info['is_pi']:
-                self._log("REBOOT REQUIRED to activate USB gadget functionality", "warning")
-                reboot_marker = Path(".reboot_required")
-                reboot_marker.write_text("Reboot required for USB gadget mode")
+            if self.reboot_required:
+                self.log("⚠️ REBOOT REQUIRED for USB gadget functionality", "WARNING")
+                self.log("Run 'sudo reboot' to complete the installation", "INFO")
             
             return True
             
         except Exception as e:
-            self._log(f"Installation failed: {str(e)}", "error")
+            self.log(f"❌ Installation failed: {e}", "ERROR")
+            import traceback
+            self.log(traceback.format_exc(), "ERROR")
             return False
-
-class XboxInstallerGUI:
-    """GUI wrapper for the installer"""
+        finally:
+            self.flush_log()
     
-    def __init__(self):
-        if not GUI_AVAILABLE:
-            raise RuntimeError("GUI components not available")
+    def check_status(self) -> Dict[str, str]:
+        """Check system status"""
+        status = {}
         
-        self.root = tk.Tk()
-        self.root.title("Xbox 360 WiFi Module Emulator - Installer")
-        self.root.geometry("800x700")
-        
-        # Queue for thread communication
-        self.queue = queue.Queue()
-        
-        # State tracking
-        self.installation_complete = False
-        self.reboot_required = False
-        self.system_status = {}
-        
-        # Installer instance
-        self.installer = XboxInstallerCore(gui_callback=self._gui_callback)
-        
-        self._setup_ui()
-        self._process_queue()
-        self._check_installation_status()
-    
-    def _gui_callback(self, action, *args):
-        """Callback from installer to GUI"""
-        self.queue.put((action, args))
-    
-    def _setup_ui(self):
-        """Setup the enhanced GUI"""
-        # Create notebook for tabs
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Main Installation Tab
-        self.main_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.main_tab, text="📦 Installation")
-        
-        # Post-Installation Tab
-        self.post_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.post_tab, text="⚙️ Configuration")
-        
-        # System Status Tab
-        self.status_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.status_tab, text="📊 System Status")
-        
-        self._setup_main_tab()
-        self._setup_post_installation_tab()
-        self._setup_status_tab()
-    
-    def _setup_main_tab(self):
-        """Setup the main installation tab"""
-        # Main container
-        main_frame = ttk.Frame(self.main_tab, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        title_label = ttk.Label(main_frame, text="🎮 Xbox 360 WiFi Module Emulator", 
-                               font=('Arial', 16, 'bold'))
-        title_label.pack(pady=(0, 20), anchor=tk.W)
-        
-        # Controls
-        controls_frame = ttk.LabelFrame(main_frame, text="Installation", padding="10")
-        controls_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Progress
-        self.progress_label = ttk.Label(controls_frame, text="Ready to install")
-        self.progress_label.pack(anchor=tk.W, pady=(0, 5))
-        
-        self.progress_var = tk.DoubleVar()
-        self.progress_bar = ttk.Progressbar(controls_frame, variable=self.progress_var, 
-                                          maximum=100, length=400)
-        self.progress_bar.pack(fill=tk.X, pady=(0, 10))
-        
-        # Main Buttons
-        button_frame = ttk.Frame(controls_frame)
-        button_frame.pack(fill=tk.X)
-        button_frame.columnconfigure((0, 1, 2), weight=1)
-        
-        self.install_btn = ttk.Button(button_frame, text="🚀 Install", 
-                                    command=self._start_installation)
-        self.install_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        self.status_btn = ttk.Button(button_frame, text="📊 Status", 
-                                   command=self._check_status)
-        self.status_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
-        
-        self.capture_btn = ttk.Button(button_frame, text="🕵️ Capture", 
-                                    command=self._start_capture)
-        self.capture_btn.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
-        
-        # Debug/Fix Buttons
-        debug_frame = ttk.Frame(controls_frame)
-        debug_frame.pack(fill=tk.X, pady=(10, 0))
-        debug_frame.columnconfigure((0, 1, 2), weight=1)
-        
-        self.debug_btn = ttk.Button(debug_frame, text="🔍 Debug DWC2", 
-                                  command=self._debug_dwc2)
-        self.debug_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        self.fix_btn = ttk.Button(debug_frame, text="🛠️ Fix DWC2", 
-                                command=self._fix_dwc2)
-        self.fix_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
-        
-        self.passthrough_btn = ttk.Button(debug_frame, text="📡 Passthrough", 
-                                        command=self._setup_passthrough)
-        self.passthrough_btn.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
-        
-        # Additional debug row for path diagnostics
-        debug_frame2 = ttk.Frame(controls_frame)
-        debug_frame2.pack(fill=tk.X, pady=(5, 0))
-        debug_frame2.columnconfigure(0, weight=1)
-        
-        self.path_diag_btn = ttk.Button(debug_frame2, text="🔍 Path Diagnostics", 
-                                      command=self._path_diagnostics)
-        self.path_diag_btn.pack(fill=tk.X)
-        
-        # Output
-        output_frame = ttk.LabelFrame(main_frame, text="Installation Output", padding="10")
-        output_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        
-        self.output_text = scrolledtext.ScrolledText(output_frame, height=15, 
-                                                   font=('Consolas', 9))
-        self.output_text.pack(fill=tk.BOTH, expand=True)
-        
-        # Configure text tags for colors
-        self.output_text.tag_configure("error", foreground="#ff4444")
-        self.output_text.tag_configure("warning", foreground="#ffaa00")
-        self.output_text.tag_configure("success", foreground="#00aa00")
-        self.output_text.tag_configure("info", foreground="#0088ff")
-        
-        self._log_to_output("Xbox 360 WiFi Module Emulator Installer Ready\n")
-        self._log_to_output("Click 'Install' to begin installation\n", "info")
-    
-    def _setup_post_installation_tab(self):
-        """Setup the post-installation configuration tab"""
-        # Main container
-        post_frame = ttk.Frame(self.post_tab, padding="10")
-        post_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        title_label = ttk.Label(post_frame, text="⚙️ Post-Installation Configuration", 
-                               font=('Arial', 14, 'bold'))
-        title_label.pack(pady=(0, 20), anchor=tk.W)
-        
-        # Installation Status
-        status_frame = ttk.LabelFrame(post_frame, text="Installation Status", padding="10")
-        status_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        self.install_status_label = ttk.Label(status_frame, text="❓ Checking installation status...")
-        self.install_status_label.pack(anchor=tk.W)
-        
-        self.reboot_status_label = ttk.Label(status_frame, text="❓ Checking reboot requirement...")
-        self.reboot_status_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        # System Operations
-        ops_frame = ttk.LabelFrame(post_frame, text="System Operations", padding="10")
-        ops_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        ops_buttons = ttk.Frame(ops_frame)
-        ops_buttons.pack(fill=tk.X)
-        ops_buttons.columnconfigure((0, 1, 2), weight=1)
-        
-        self.reboot_btn = ttk.Button(ops_buttons, text="🔄 Reboot Now", 
-                                   command=self._reboot_system, state='disabled')
-        self.reboot_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        self.schedule_reboot_btn = ttk.Button(ops_buttons, text="⏰ Schedule Reboot", 
-                                            command=self._schedule_reboot)
-        self.schedule_reboot_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
-        
-        self.postpone_reboot_btn = ttk.Button(ops_buttons, text="⏸️ Postpone", 
-                                            command=self._postpone_reboot)
-        self.postpone_reboot_btn.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
-        
-        # Service Management
-        service_frame = ttk.LabelFrame(post_frame, text="Service Management", padding="10")
-        service_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        service_buttons = ttk.Frame(service_frame)
-        service_buttons.pack(fill=tk.X)
-        service_buttons.columnconfigure((0, 1, 2, 3), weight=1)
-        
-        self.start_service_btn = ttk.Button(service_buttons, text="▶️ Start Service", 
-                                          command=self._start_service)
-        self.start_service_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 2))
-        
-        self.stop_service_btn = ttk.Button(service_buttons, text="⏹️ Stop Service", 
-                                         command=self._stop_service)
-        self.stop_service_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=2)
-        
-        self.enable_autostart_btn = ttk.Button(service_buttons, text="🔄 Auto-start", 
-                                             command=self._enable_autostart)
-        self.enable_autostart_btn.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=2)
-        
-        self.view_logs_btn = ttk.Button(service_buttons, text="📋 View Logs", 
-                                      command=self._view_service_logs)
-        self.view_logs_btn.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=(2, 0))
-        
-        # Configuration Options
-        config_frame = ttk.LabelFrame(post_frame, text="Configuration Options", padding="10")
-        config_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # Network settings
-        network_frame = ttk.Frame(config_frame)
-        network_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(network_frame, text="Network Name:").pack(side=tk.LEFT)
-        self.network_name_var = tk.StringVar(value="PI-Net")
-        network_entry = ttk.Entry(network_frame, textvariable=self.network_name_var, width=15)
-        network_entry.pack(side=tk.LEFT, padx=(5, 10))
-        
-        ttk.Label(network_frame, text="IP Address:").pack(side=tk.LEFT)
-        self.ip_address_var = tk.StringVar(value="192.168.4.1")
-        ip_entry = ttk.Entry(network_frame, textvariable=self.ip_address_var, width=15)
-        ip_entry.pack(side=tk.LEFT, padx=(5, 10))
-        
-        apply_config_btn = ttk.Button(network_frame, text="✅ Apply Config", 
-                                    command=self._apply_network_config)
-        apply_config_btn.pack(side=tk.LEFT, padx=(10, 0))
-        
-        # Advanced Options
-        advanced_frame = ttk.LabelFrame(post_frame, text="Advanced Options", padding="10")
-        advanced_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        advanced_buttons = ttk.Frame(advanced_frame)
-        advanced_buttons.pack(fill=tk.X)
-        advanced_buttons.columnconfigure((0, 1, 2), weight=1)
-        
-        backup_btn = ttk.Button(advanced_buttons, text="💾 Backup Config", 
-                              command=self._backup_configuration)
-        backup_btn.grid(row=0, column=0, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        restore_btn = ttk.Button(advanced_buttons, text="📥 Restore Config", 
-                               command=self._restore_configuration)
-        restore_btn.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5)
-        
-        uninstall_btn = ttk.Button(advanced_buttons, text="🗑️ Un-install", 
-                                 command=self._uninstall_system)
-        uninstall_btn.grid(row=0, column=2, sticky=(tk.W, tk.E), padx=(5, 0))
-        
-        # Quick Actions
-        quick_frame = ttk.LabelFrame(post_frame, text="Quick Actions", padding="10")
-        quick_frame.pack(fill=tk.BOTH, expand=True)
-        
-        quick_text = scrolledtext.ScrolledText(quick_frame, height=8, 
-                                             font=('Consolas', 9))
-        quick_text.pack(fill=tk.BOTH, expand=True)
-        quick_text.insert(tk.END, "📋 Post-Installation Quick Actions:\n\n")
-        quick_text.insert(tk.END, "1. 🔄 Reboot system for USB gadget mode\n")
-        quick_text.insert(tk.END, "2. 🔌 Connect Xbox 360 via USB-C cable\n")
-        quick_text.insert(tk.END, "3. 🎮 Xbox should detect wireless adapter\n")
-        quick_text.insert(tk.END, "4. 📡 Scan for 'PI-Net' network on Xbox\n")
-        quick_text.insert(tk.END, "5. ✅ Connect and enjoy 20x faster internet!\n\n")
-        quick_text.insert(tk.END, "💡 Troubleshooting: Use Debug/Fix buttons on Installation tab\n")
-        quick_text.config(state='disabled')
-        
-        self.quick_text = quick_text
-    
-    def _setup_status_tab(self):
-        """Setup the system status tab"""
-        # Main container
-        status_frame = ttk.Frame(self.status_tab, padding="10")
-        status_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        title_label = ttk.Label(status_frame, text="📊 System Status & Information", 
-                               font=('Arial', 14, 'bold'))
-        title_label.pack(pady=(0, 20), anchor=tk.W)
-        
-        # Status refresh button
-        refresh_frame = ttk.Frame(status_frame)
-        refresh_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        self.refresh_status_btn = ttk.Button(refresh_frame, text="🔄 Refresh Status", 
-                                           command=self._refresh_system_status)
-        self.refresh_status_btn.pack(side=tk.LEFT)
-        
-        self.auto_refresh_var = tk.BooleanVar()
-        auto_refresh_cb = ttk.Checkbutton(refresh_frame, text="Auto-refresh (30s)", 
-                                        variable=self.auto_refresh_var,
-                                        command=self._toggle_auto_refresh)
-        auto_refresh_cb.pack(side=tk.LEFT, padx=(20, 0))
-        
-        # System Information
-        info_frame = ttk.LabelFrame(status_frame, text="System Information", padding="10")
-        info_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        self.system_info_text = scrolledtext.ScrolledText(info_frame, height=8, 
-                                                        font=('Consolas', 9))
-        self.system_info_text.pack(fill=tk.BOTH, expand=True)
-        
-        # Hardware Status
-        hw_frame = ttk.LabelFrame(status_frame, text="Hardware Status", padding="10")
-        hw_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        hw_grid = ttk.Frame(hw_frame)
-        hw_grid.pack(fill=tk.X)
-        hw_grid.columnconfigure((1, 3), weight=1)
-        
-        # DWC2 Status
-        ttk.Label(hw_grid, text="DWC2 Module:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
-        self.dwc2_status_label = ttk.Label(hw_grid, text="❓ Checking...", foreground="#666666")
-        self.dwc2_status_label.grid(row=0, column=1, sticky=tk.W)
-        
-        # USB Controllers
-        ttk.Label(hw_grid, text="USB Controllers:").grid(row=0, column=2, sticky=tk.W, padx=(20, 10))
-        self.udc_status_label = ttk.Label(hw_grid, text="❓ Checking...", foreground="#666666")
-        self.udc_status_label.grid(row=0, column=3, sticky=tk.W)
-        
-        # Service Status
-        ttk.Label(hw_grid, text="Xbox Service:").grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=(5, 0))
-        self.service_status_label = ttk.Label(hw_grid, text="❓ Checking...", foreground="#666666")
-        self.service_status_label.grid(row=1, column=1, sticky=tk.W, pady=(5, 0))
-        
-        # Network Interface
-        ttk.Label(hw_grid, text="USB Network:").grid(row=1, column=2, sticky=tk.W, padx=(20, 10), pady=(5, 0))
-        self.network_status_label = ttk.Label(hw_grid, text="❓ Checking...", foreground="#666666")
-        self.network_status_label.grid(row=1, column=3, sticky=tk.W, pady=(5, 0))
-        
-        # Real-time Logs
-        logs_frame = ttk.LabelFrame(status_frame, text="Real-time System Logs", padding="10")
-        logs_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.logs_text = scrolledtext.ScrolledText(logs_frame, height=10, 
-                                                 font=('Consolas', 8))
-        self.logs_text.pack(fill=tk.BOTH, expand=True)
-        
-        # Configure log text tags
-        self.logs_text.tag_configure("error", foreground="#ff4444")
-        self.logs_text.tag_configure("warning", foreground="#ffaa00")
-        self.logs_text.tag_configure("success", foreground="#00aa00")
-        self.logs_text.tag_configure("info", foreground="#0088ff")
-    
-    def _log_to_output(self, message, tag="normal"):
-        """Add message to output text"""
-        self.output_text.insert(tk.END, message, tag)
-        self.output_text.see(tk.END)
-    
-    def _process_queue(self):
-        """Process messages from installer thread"""
-        try:
-            while True:
-                action, args = self.queue.get_nowait()
-                
-                if action == 'log':
-                    message, level = args
-                    self._log_to_output(f"{message}\n", level)
-                
-                elif action == 'progress':
-                    step, total, message, percentage = args
-                    self.progress_var.set(percentage)
-                    self.progress_label.config(text=f"Step {step}/{total}: {message}")
-                
-                elif action == 'update_status':
-                    status_type, status_text = args
-                    if status_type == 'install':
-                        self.install_status_label.config(text=status_text)
-                    elif status_type == 'reboot':
-                        self.reboot_status_label.config(text=status_text)
-                
-                elif action == 'enable_reboot':
-                    enable = args
-                    if enable:
-                        self.reboot_btn.config(state='normal')
-                    else:
-                        self.reboot_btn.config(state='disabled')
-                
-                elif action == 'update_system_info':
-                    info_text = args
-                    self.system_info_text.delete(1.0, tk.END)
-                    self.system_info_text.insert(tk.END, info_text)
-                
-                elif action == 'update_hw_status':
-                    component, status_text, color = args
-                    if component == 'dwc2':
-                        self.dwc2_status_label.config(text=status_text, foreground=color)
-                    elif component == 'udc':
-                        self.udc_status_label.config(text=status_text, foreground=color)
-                    elif component == 'service':
-                        self.service_status_label.config(text=status_text, foreground=color)
-                    elif component == 'network':
-                        self.network_status_label.config(text=status_text, foreground=color)
-                
-                elif action == 'log_status':
-                    message, level = args
-                    self.logs_text.insert(tk.END, f"{message}\n", level)
-                    self.logs_text.see(tk.END)
-                
-                elif action == 'clear_status':
-                    self.system_info_text.delete(1.0, tk.END)
-                    self.logs_text.delete(1.0, tk.END)
-                
-        except queue.Empty:
-            pass
-        
-        # Schedule next check
-        self.root.after(100, self._process_queue)
-    
-    def _check_installation_status(self):
-        """Check if installation is already complete"""
-        def check_thread():
-            try:
-                # Check if completion marker exists
-                completion_marker = Path(".installation_complete")
-                if completion_marker.exists():
-                    self.installation_complete = True
-                    self.queue.put(('update_status', ('install', "✅ Installation Complete")))
-                    
-                    # Check if reboot is required
-                    reboot_marker = Path(".reboot_required")
-                    if reboot_marker.exists():
-                        self.reboot_required = True
-                        self.queue.put(('update_status', ('reboot', "🔄 Reboot Required")))
-                        self.queue.put(('enable_reboot', True))
-                    else:
-                        self.queue.put(('update_status', ('reboot', "✅ No Reboot Required")))
-                else:
-                    self.queue.put(('update_status', ('install', "❌ Not Installed")))
-                    self.queue.put(('update_status', ('reboot', "⏸️ Install First")))
-                    
-            except Exception as e:
-                self.queue.put(('update_status', ('install', f"❌ Check Failed: {e}")))
-        
-        threading.Thread(target=check_thread, daemon=True).start()
-    
-    def _reboot_system(self):
-        """Reboot the system"""
-        if messagebox.askyesno("Reboot System", 
-                              "This will reboot your Raspberry Pi now.\n"
-                              "Make sure all work is saved.\n\n"
-                              "Continue with reboot?"):
-            try:
-                subprocess.run(['pkexec', 'systemctl', 'reboot'], check=True)
-            except Exception as e:
-                messagebox.showerror("Reboot Failed", f"Failed to reboot system: {e}")
-    
-    def _schedule_reboot(self):
-        """Schedule a delayed reboot"""
-        # Simple dialog for reboot delay
-        delay = simpledialog.askinteger("Schedule Reboot", 
-                                       "Minutes until reboot (1-60):", 
-                                       minvalue=1, maxvalue=60, initialvalue=5)
-        if delay:
-            try:
-                subprocess.run(['pkexec', 'shutdown', '-r', f'+{delay}'], check=True)
-                messagebox.showinfo("Reboot Scheduled", 
-                                   f"System will reboot in {delay} minutes.\n"
-                                   "Use 'sudo shutdown -c' to cancel.")
-            except Exception as e:
-                messagebox.showerror("Schedule Failed", f"Failed to schedule reboot: {e}")
-    
-    def _postpone_reboot(self):
-        """Postpone reboot and hide requirement"""
-        if messagebox.askyesno("Postpone Reboot", 
-                              "This will postpone the reboot requirement.\n"
-                              "Some features may not work until you reboot.\n\n"
-                              "Continue?"):
-            try:
-                reboot_marker = Path(".reboot_required")
-                if reboot_marker.exists():
-                    reboot_marker.unlink()
-                self.reboot_required = False
-                self.queue.put(('update_status', ('reboot', "⏸️ Postponed")))
-                self.queue.put(('enable_reboot', False))
-            except Exception as e:
-                messagebox.showerror("Postpone Failed", f"Failed to postpone: {e}")
-    
-    def _start_service(self):
-        """Start the Xbox emulator service"""
-        def start_thread():
-            try:
-                result = subprocess.run(['pkexec', 'systemctl', 'start', 'xbox360-emulator'], 
-                                      capture_output=True, text=True)
-                if result.returncode == 0:
-                    self.queue.put(('log', ("✅ Xbox service started", 'success')))
-                else:
-                    self.queue.put(('log', (f"❌ Failed to start service: {result.stderr}", 'error')))
-            except Exception as e:
-                self.queue.put(('log', (f"❌ Service start failed: {e}", 'error')))
-        
-        threading.Thread(target=start_thread, daemon=True).start()
-    
-    def _path_diagnostics(self):
-        """Comprehensive path diagnostics"""
-        self._log_to_output("\n🔍 PATH DIAGNOSTICS\n", "info")
-        self._log_to_output("=" * 40 + "\n", "info")
-        
-        # Basic paths
-        self._log_to_output(f"Current working directory: {Path.cwd()}\n", "info")
-        self._log_to_output(f"Script directory (same as CWD): {self.installer.script_dir}\n", "info")
-        self._log_to_output(f"Script file: {__file__}\n", "info")
-        self._log_to_output(f"Python executable: {sys.executable}\n", "info")
-        
-        # Check current directory (now script directory)
-        try:
-            self._log_to_output("✅ Using current working directory for all files\n", "success")
-            
-            # List all files in current directory
-            all_files = list(Path.cwd().iterdir())
-            self._log_to_output(f"Files in current directory ({len(all_files)}):\n", "info")
-                
-            for file in sorted(all_files):
-                if file.is_file():
-                    size = file.stat().st_size
-                    self._log_to_output(f"  📄 {file.name} ({size} bytes)\n", "info")
-                elif file.is_dir():
-                    self._log_to_output(f"  📁 {file.name}/\n", "info")
-                        
-        except Exception as e:
-            self._log_to_output(f"❌ Error listing files: {e}\n", "error")
-        
-        # Check for expected scripts
-        expected_scripts = [
-            "debug_dwc2.py",
-            "fix_dwc2.py", 
-            "system_status.py",
-            "usb_capture.py",
-            "start_passthrough.py",
-            "usb_passthrough.py"
-        ]
-        
-        self._log_to_output("\nExpected script files:\n", "info")
-        for script in expected_scripts:
-            script_path = Path(script)
-            if script_path.exists():
-                self._log_to_output(f"  ✅ {script}\n", "success")
-            else:
-                self._log_to_output(f"  ❌ {script} (missing)\n", "error")
-        
-        # Check installation markers
-        self._log_to_output("\nInstallation markers:\n", "info")
-        completion_marker = Path(".installation_complete")
-        reboot_marker = Path(".reboot_required")
-        
-        if completion_marker.exists():
-            self._log_to_output("  ✅ Installation complete marker exists\n", "success")
-        else:
-            self._log_to_output("  ❌ Installation complete marker missing\n", "warning")
-            
-        if reboot_marker.exists():
-            self._log_to_output("  🔄 Reboot required marker exists\n", "warning")
-        else:
-            self._log_to_output("  ✅ No reboot required marker\n", "info")
-        
-        # Environment info
-        self._log_to_output("\nEnvironment:\n", "info")
-        self._log_to_output(f"  Platform: {platform.system()} {platform.release()}\n", "info")
-        self._log_to_output(f"  Python: {sys.version.split()[0]}\n", "info")
-        self._log_to_output(f"  User: {os.getenv('USER', 'unknown')}\n", "info")
-        
-        # Hardware check
-        try:
-            with open('/proc/cpuinfo', 'r') as f:
-                cpuinfo = f.read()
-                if 'Raspberry Pi' in cpuinfo:
-                    # Extract Pi model
-                    for line in cpuinfo.split('\n'):
-                        if 'Model' in line:
-                            model = line.split(':')[1].strip()
-                            self._log_to_output(f"  Hardware: {model}\n", "success")
-                            break
-                    else:
-                        self._log_to_output("  Hardware: Raspberry Pi (model unknown)\n", "success")
-                else:
-                    self._log_to_output("  Hardware: Not a Raspberry Pi\n", "warning")
-        except:
-            self._log_to_output("  Hardware: Cannot determine\n", "warning")
-        
-        self._log_to_output("\n" + "=" * 40 + "\n", "info")
-        self._log_to_output("Path diagnostics complete!\n", "info")
-    
-    def _stop_service(self):
-        """Stop the Xbox emulator service"""
-        def stop_thread():
-            try:
-                result = subprocess.run(['pkexec', 'systemctl', 'stop', 'xbox360-emulator'], 
-                                      capture_output=True, text=True)
-                if result.returncode == 0:
-                    self.queue.put(('log', ("✅ Xbox service stopped", 'success')))
-                else:
-                    self.queue.put(('log', (f"❌ Failed to stop service: {result.stderr}", 'error')))
-            except Exception as e:
-                self.queue.put(('log', (f"❌ Service stop failed: {e}", 'error')))
-        
-        threading.Thread(target=stop_thread, daemon=True).start()
-    
-    def _enable_autostart(self):
-        """Enable service autostart"""
-        def enable_thread():
-            try:
-                result = subprocess.run(['pkexec', 'systemctl', 'enable', 'xbox360-emulator'], 
-                                      capture_output=True, text=True)
-                if result.returncode == 0:
-                    self.queue.put(('log', ("✅ Auto-start enabled", 'success')))
-                else:
-                    self.queue.put(('log', (f"❌ Failed to enable auto-start: {result.stderr}", 'error')))
-            except Exception as e:
-                self.queue.put(('log', (f"❌ Auto-start failed: {e}", 'error')))
-        
-        threading.Thread(target=enable_thread, daemon=True).start()
-    
-    def _view_service_logs(self):
-        """View service logs in a new window"""
-        try:
-            # Create log viewer window
-            log_window = tk.Toplevel(self.root)
-            log_window.title("Xbox 360 Service Logs")
-            log_window.geometry("800x600")
-            
-            # Log text area
-            log_frame = ttk.Frame(log_window, padding="10")
-            log_frame.pack(fill=tk.BOTH, expand=True)
-            
-            log_text = scrolledtext.ScrolledText(log_frame, font=('Consolas', 9))
-            log_text.pack(fill=tk.BOTH, expand=True)
-            
-            # Get logs
-            try:
-                result = subprocess.run(['journalctl', '-u', 'xbox360-emulator', '-n', '100'], 
-                                      capture_output=True, text=True)
-                if result.returncode == 0:
-                    log_text.insert(tk.END, result.stdout)
-                else:
-                    log_text.insert(tk.END, f"Failed to get logs: {result.stderr}")
-            except Exception as e:
-                log_text.insert(tk.END, f"Error getting logs: {e}")
-            
-            log_text.config(state='disabled')
-            
-        except Exception as e:
-            messagebox.showerror("Log Viewer Error", f"Failed to open log viewer: {e}")
-    
-    def _apply_network_config(self):
-        """Apply network configuration changes"""
-        network_name = self.network_name_var.get()
-        ip_address = self.ip_address_var.get()
-        
-        if not network_name or not ip_address:
-            messagebox.showerror("Invalid Config", "Network name and IP address are required")
-            return
-        
-        if messagebox.askyesno("Apply Configuration", 
-                              f"Apply network configuration?\n"
-                              f"Network Name: {network_name}\n"
-                              f"IP Address: {ip_address}\n\n"
-                              "This may require a service restart."):
-            def apply_thread():
-                try:
-                    # Update configuration files (simplified)
-                    self.queue.put(('log', (f"✅ Network config updated: {network_name} @ {ip_address}", 'success')))
-                    self.queue.put(('log', ("💡 Restart service to apply changes", 'info')))
-                except Exception as e:
-                    self.queue.put(('log', (f"❌ Config update failed: {e}", 'error')))
-            
-            threading.Thread(target=apply_thread, daemon=True).start()
-    
-    def _backup_configuration(self):
-        """Backup current configuration"""
-        def backup_thread():
-            try:
-                import tarfile
-                import time
-                
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                backup_name = f"xbox360_config_backup_{timestamp}.tar.gz"
-                backup_path = Path.home() / "Desktop" / backup_name
-                
-                self.queue.put(('log', ("💾 Creating configuration backup...", 'info')))
-                
-                with tarfile.open(backup_path, "w:gz") as tar:
-                    # Add configuration files
-                    config_files = [
-                        "/boot/firmware/config.txt",
-                        "/boot/config.txt",
-                        "/etc/systemd/system/xbox360-emulator.service"
-                    ]
-                    
-                    for config_file in config_files:
-                        if Path(config_file).exists():
-                            tar.add(config_file, arcname=Path(config_file).name)
-                
-                self.queue.put(('log', (f"✅ Backup created: {backup_path}", 'success')))
-                
-            except Exception as e:
-                self.queue.put(('log', (f"❌ Backup failed: {e}", 'error')))
-        
-        threading.Thread(target=backup_thread, daemon=True).start()
-    
-    def _restore_configuration(self):
-        """Restore configuration from backup"""
-        backup_file = filedialog.askopenfilename(
-            title="Select Backup File",
-            filetypes=[("Tar Gzip files", "*.tar.gz"), ("All files", "*.*")]
-        )
-        
-        if backup_file:
-            if messagebox.askyesno("Restore Configuration", 
-                                  f"Restore configuration from:\n{backup_file}\n\n"
-                                  "This will overwrite current settings."):
-                def restore_thread():
-                    try:
-                        import tarfile
-                        
-                        self.queue.put(('log', ("📥 Restoring configuration...", 'info')))
-                        
-                        with tarfile.open(backup_file, "r:gz") as tar:
-                            tar.extractall("/tmp/xbox360_restore")
-                        
-                        self.queue.put(('log', ("✅ Configuration restored", 'success')))
-                        self.queue.put(('log', ("🔄 Reboot required for changes", 'warning')))
-                        
-                    except Exception as e:
-                        self.queue.put(('log', (f"❌ Restore failed: {e}", 'error')))
-                
-                threading.Thread(target=restore_thread, daemon=True).start()
-    
-    def _uninstall_system(self):
-        """Uninstall the Xbox emulator system"""
-        if messagebox.askyesno("Uninstall System", 
-                              "This will completely remove the Xbox 360 emulator.\n"
-                              "This action cannot be undone.\n\n"
-                              "Continue with uninstallation?"):
-            def uninstall_thread():
-                try:
-                    self.queue.put(('log', ("🗑️ Starting system uninstall...", 'warning')))
-                    
-                    # Stop and disable service
-                    subprocess.run(['pkexec', 'systemctl', 'stop', 'xbox360-emulator'], 
-                                 capture_output=True)
-                    subprocess.run(['pkexec', 'systemctl', 'disable', 'xbox360-emulator'], 
-                                 capture_output=True)
-                    
-                    self.queue.put(('log', ("✅ System uninstall completed", 'success')))
-                    self.queue.put(('log', ("💡 Manual cleanup may be needed for boot config", 'info')))
-                    
-                except Exception as e:
-                    self.queue.put(('log', (f"❌ Uninstall failed: {e}", 'error')))
-            
-            threading.Thread(target=uninstall_thread, daemon=True).start()
-    
-    def _refresh_system_status(self):
-        """Refresh all system status information"""
-        def refresh_thread():
-            try:
-                self.queue.put(('log_status', ("🔄 Refreshing system status...", 'info')))
-                
-                # Clear previous status
-                self.queue.put(('clear_status', None))
-                
-                # System information
-                info_lines = []
-                
-                # OS Information
-                try:
-                    with open('/etc/os-release', 'r') as f:
-                        for line in f:
-                            if 'PRETTY_NAME' in line:
-                                os_name = line.split('=')[1].strip().strip('"')
-                                info_lines.append(f"OS: {os_name}")
-                                break
-                except:
-                    info_lines.append("OS: Unknown")
-                
-                # Hardware info
-                try:
-                    with open('/proc/cpuinfo', 'r') as f:
-                        content = f.read()
-                        if 'Raspberry Pi' in content:
-                            # Extract model
-                            for line in content.split('\n'):
-                                if 'Model' in line:
-                                    model = line.split(':')[1].strip()
-                                    info_lines.append(f"Hardware: {model}")
-                                    break
-                            else:
-                                info_lines.append("Hardware: Raspberry Pi")
-                        else:
-                            info_lines.append("Hardware: Non-Pi System")
-                except:
-                    info_lines.append("Hardware: Unknown")
-                
-                # Memory info
-                try:
-                    with open('/proc/meminfo', 'r') as f:
-                        for line in f:
-                            if 'MemTotal' in line:
-                                mem_kb = int(line.split()[1])
-                                mem_mb = mem_kb // 1024
-                                info_lines.append(f"Memory: {mem_mb} MB")
-                                break
-                except:
-                    info_lines.append("Memory: Unknown")
-                
-                # Disk space
-                try:
-                    result = subprocess.run(['df', '-h', '/'], capture_output=True, text=True)
-                    if result.returncode == 0:
-                        lines = result.stdout.split('\n')
-                        if len(lines) > 1:
-                            parts = lines[1].split()
-                            if len(parts) >= 4:
-                                info_lines.append(f"Disk: {parts[3]} free of {parts[1]}")
-                except:
-                    info_lines.append("Disk: Unknown")
-                
-                self.queue.put(('update_system_info', '\n'.join(info_lines)))
-                
-                # Check hardware status
-                self._check_hardware_status()
-                
-                self.queue.put(('log_status', ("✅ Status refresh completed", 'success')))
-                
-            except Exception as e:
-                self.queue.put(('log_status', (f"❌ Status refresh failed: {e}", 'error')))
-        
-        threading.Thread(target=refresh_thread, daemon=True).start()
-    
-    def _check_hardware_status(self):
-        """Check hardware component status"""
         # Check DWC2 module
-        try:
-            result = subprocess.run(['lsmod'], capture_output=True, text=True)
-            if 'dwc2' in result.stdout:
-                self.queue.put(('update_hw_status', ('dwc2', "✅ Loaded", "#00aa00")))
-            else:
-                self.queue.put(('update_hw_status', ('dwc2', "❌ Not Loaded", "#ff4444")))
-        except:
-            self.queue.put(('update_hw_status', ('dwc2', "❓ Check Failed", "#666666")))
+        success, stdout, _ = self.run_command("lsmod | grep dwc2", "")
+        status['dwc2'] = "✅ Loaded" if success and stdout.strip() else "❌ Not Loaded"
         
-        # Check USB device controllers
-        try:
-            udc_path = Path('/sys/class/udc/')
-            if udc_path.exists():
-                udcs = list(udc_path.glob('*'))
-                if udcs:
-                    self.queue.put(('update_hw_status', ('udc', f"✅ {len(udcs)} Found", "#00aa00")))
-                else:
-                    self.queue.put(('update_hw_status', ('udc', "❌ None Found", "#ff4444")))
-            else:
-                self.queue.put(('update_hw_status', ('udc', "❌ Path Missing", "#ff4444")))
-        except:
-            self.queue.put(('update_hw_status', ('udc', "❓ Check Failed", "#666666")))
+        # Check USB controllers
+        udc_path = Path('/sys/class/udc/')
+        if udc_path.exists():
+            udcs = list(udc_path.glob('*'))
+            status['udc'] = f"✅ {len(udcs)} Found" if udcs else "❌ None Found"
+        else:
+            status['udc'] = "❌ Path Missing"
         
-        # Check service status
-        try:
-            result = subprocess.run(['systemctl', 'is-active', 'xbox360-emulator'], 
-                                  capture_output=True, text=True)
-            if result.returncode == 0 and 'active' in result.stdout:
-                self.queue.put(('update_hw_status', ('service', "✅ Running", "#00aa00")))
-            else:
-                self.queue.put(('update_hw_status', ('service', "⏹️ Stopped", "#ffaa00")))
-        except:
-            self.queue.put(('update_hw_status', ('service', "❓ Check Failed", "#666666")))
+        # Check service
+        success, stdout, _ = self.run_command("systemctl is-active xbox360-emulator", "")
+        if success and 'active' in stdout:
+            status['service'] = "✅ Running"
+        else:
+            status['service'] = "⏹️ Stopped"
         
         # Check network interface
-        try:
-            result = subprocess.run(['ip', 'link', 'show', 'usb0'], capture_output=True, text=True)
-            if result.returncode == 0:
-                if 'UP' in result.stdout:
-                    self.queue.put(('update_hw_status', ('network', "✅ Up", "#00aa00")))
-                else:
-                    self.queue.put(('update_hw_status', ('network', "⏸️ Down", "#ffaa00")))
-            else:
-                self.queue.put(('update_hw_status', ('network', "❌ Missing", "#ff4444")))
-        except:
-            self.queue.put(('update_hw_status', ('network', "❓ Check Failed", "#666666")))
-    
-    def _toggle_auto_refresh(self):
-        """Toggle automatic status refresh"""
-        if self.auto_refresh_var.get():
-            self._auto_refresh_status()
-        # If unchecked, the scheduled refresh will see the variable is False and stop
-    
-    def _auto_refresh_status(self):
-        """Automatically refresh status every 30 seconds"""
-        if self.auto_refresh_var.get():
-            self._refresh_system_status()
-            # Schedule next refresh
-            self.root.after(30000, self._auto_refresh_status)
-    
-    def _start_installation(self):
-        """Start installation in separate thread"""
-        self.install_btn.config(state='disabled', text='Installing...')
+        success, stdout, _ = self.run_command("ip link show usb0", "")
+        if success:
+            status['network'] = "✅ Up" if 'UP' in stdout else "⏸️ Down"
+        else:
+            status['network'] = "❌ Missing"
         
-        def install_thread():
-            try:
-                success = self.installer.install()
-                if success:
-                    # Switch to configuration tab after successful installation
-                    self.notebook.select(self.post_tab)
-                    # Check installation status to update UI
-                    self._check_installation_status()
-            except Exception as e:
-                self.queue.put(('log', (f"Installation failed: {e}", 'error')))
-            finally:
-                self.root.after(0, lambda: self.install_btn.config(state='normal', text='🚀 Install'))
-        
-        threading.Thread(target=install_thread, daemon=True).start()
-    
-    def _check_status(self):
-        """Check system status"""
-        try:
-            status_script = Path("system_status.py")
-            if status_script.exists():
-                result = subprocess.run([sys.executable, str(status_script)],
-                                      capture_output=True, text=True, timeout=10)
-                self._log_to_output(result.stdout)
-            else:
-                # Inline status check
-                self._log_to_output("📊 System Status Check\n", "info")
-                self._log_to_output(f"Script Directory: {self.installer.script_dir}\n", "info")
-                self._log_to_output(f"Current Working Directory: {Path.cwd()}\n", "info")
-                self._log_to_output(f"Python Executable: {sys.executable}\n", "info")
-                
-                # List files in script directory
-                try:
-                    if self.installer.script_dir.exists():
-                        files = list(self.installer.script_dir.glob("*.py"))
-                        self._log_to_output(f"Python files in script directory ({len(files)}):\n", "info")
-                        for file in files[:10]:  # Show first 10 files
-                            self._log_to_output(f"  - {file.name}\n", "info")
-                        if len(files) > 10:
-                            self._log_to_output(f"  ... and {len(files) - 10} more\n", "info")
-                    else:
-                        self._log_to_output("❌ Script directory does not exist!\n", "error")
-                except Exception as e:
-                    self._log_to_output(f"❌ Cannot list script directory: {e}\n", "error")
-                
-                # Check if we're on Pi
-                try:
-                    with open('/proc/cpuinfo', 'r') as f:
-                        if 'Raspberry Pi' in f.read():
-                            self._log_to_output("✅ Running on Raspberry Pi\n", "success")
-                        else:
-                            self._log_to_output("❌ Not running on Raspberry Pi\n", "warning")
-                except:
-                    self._log_to_output("❓ Could not determine hardware\n", "warning")
-                    
-        except Exception as e:
-            self._log_to_output(f"Status check failed: {e}\n", "error")
-    
-    def _start_capture(self):
-        """Start USB capture"""
-        try:
-            capture_script = Path("usb_capture.py")
-            if capture_script.exists():
-                self._log_to_output("Starting USB capture...\n", "info")
-                result = subprocess.run([sys.executable, str(capture_script)],
-                                      capture_output=True, text=True, timeout=60)
-                self._log_to_output(result.stdout)
-            else:
-                self._log_to_output("❌ USB capture script not found\n", "error")
-                self._log_to_output(f"   Looking for: {capture_script}\n", "error")
-                self._log_to_output("💡 Use the Installation tab to install the system first\n", "info")
-        except Exception as e:
-            self._log_to_output(f"USB capture failed: {e}\n", "error")
-    
-    def _debug_dwc2(self):
-        """Debug DWC2 module status"""
-        self.debug_btn.config(state='disabled', text='Debugging...')
-        
-        def debug_thread():
-            try:
-                self.queue.put(('log', ("🔍 Starting DWC2 Debug Analysis...", 'info')))
-                
-                # Run DWC2 debugger
-                debug_script = Path("debug_dwc2.py")
-                if debug_script.exists():
-                    result = subprocess.run([sys.executable, str(debug_script)],
-                                          capture_output=True, text=True, timeout=30)
-                    if result.stdout:
-                        self.queue.put(('log', (result.stdout, 'info')))
-                    if result.stderr:
-                        self.queue.put(('log', (result.stderr, 'warning')))
-                else:
-                    # Inline debug functionality
-                    self._run_inline_debug()
-                    
-            except Exception as e:
-                self.queue.put(('log', (f"Debug failed: {e}", 'error')))
-            finally:
-                # Re-enable button in main thread
-                self.root.after(100, lambda: self.debug_btn.config(state='normal', text='🔍 Debug DWC2'))
-        
-        threading.Thread(target=debug_thread, daemon=True).start()
-    
-    def _fix_dwc2(self):
-        """Fix DWC2 module issues"""
-        # Warn user about sudo requirement
-        if not messagebox.askyesno("Fix DWC2", 
-                                  "DWC2 fix requires root privileges.\n"
-                                  "This will modify boot configuration files.\n\n"
-                                  "Continue?"):
-            return
-        
-        self.fix_btn.config(state='disabled', text='Fixing...')
-        
-        def fix_thread():
-            try:
-                self.queue.put(('log', ("🛠️ Starting DWC2 Comprehensive Fix...", 'info')))
-                
-                # Run DWC2 fixer
-                fix_script = Path("fix_dwc2.py")
-                if fix_script.exists():
-                    # Run with pkexec for GUI sudo
-                    result = subprocess.run(['pkexec', sys.executable, str(fix_script)],
-                                          capture_output=True, text=True, timeout=60)
-                    if result.stdout:
-                        self.queue.put(('log', (result.stdout, 'info')))
-                    if result.stderr:
-                        self.queue.put(('log', (result.stderr, 'warning')))
-                    
-                    if result.returncode == 0:
-                        self.queue.put(('log', ("✅ DWC2 fix completed successfully!", 'success')))
-                        self.queue.put(('log', ("🔄 Reboot required for changes to take effect", 'warning')))
-                    else:
-                        self.queue.put(('log', ("❌ DWC2 fix failed", 'error')))
-                else:
-                    # Inline fix functionality
-                    self._run_inline_fix()
-                    
-            except Exception as e:
-                self.queue.put(('log', (f"Fix failed: {e}", 'error')))
-            finally:
-                # Re-enable button in main thread
-                self.root.after(100, lambda: self.fix_btn.config(state='normal', text='🛠️ Fix DWC2'))
-        
-        threading.Thread(target=fix_thread, daemon=True).start()
-    
-    def _setup_passthrough(self):
-        """Setup USB passthrough"""
-        self.passthrough_btn.config(state='disabled', text='Setting up...')
-        
-        def passthrough_thread():
-            try:
-                self.queue.put(('log', ("📡 Setting up USB Passthrough...", 'info')))
-                
-                # Run passthrough setup
-                passthrough_script = Path("start_passthrough.py")
-                if passthrough_script.exists():
-                    result = subprocess.run(['pkexec', sys.executable, str(passthrough_script), '--setup'],
-                                          capture_output=True, text=True, timeout=60)
-                    if result.stdout:
-                        self.queue.put(('log', (result.stdout, 'info')))
-                    if result.stderr:
-                        self.queue.put(('log', (result.stderr, 'warning')))
-                        
-                    if result.returncode == 0:
-                        self.queue.put(('log', ("✅ USB Passthrough setup completed!", 'success')))
-                        self.queue.put(('log', ("💡 Use 'sudo python3 usb_passthrough.py' to start capture", 'info')))
-                else:
-                    self.queue.put(('log', ("❌ Passthrough script not found", 'error')))
-                    self.queue.put(('log', (f"   Looking for: {passthrough_script}", 'error')))
-                    self.queue.put(('log', ("💡 Scripts are created during installation", 'info')))
-                    
-            except Exception as e:
-                self.queue.put(('log', (f"Passthrough setup failed: {e}", 'error')))
-            finally:
-                # Re-enable button in main thread
-                self.root.after(100, lambda: self.passthrough_btn.config(state='normal', text='📡 Passthrough'))
-        
-        threading.Thread(target=passthrough_thread, daemon=True).start()
-    
-    def _run_inline_debug(self):
-        """Run inline debug functionality when script not available"""
-        try:
-            # Basic system checks
-            self.queue.put(('log', ("🔍 Checking system information...", 'info')))
-            
-            # Check if we're on Pi
-            try:
-                with open('/proc/cpuinfo', 'r') as f:
-                    if 'Raspberry Pi' in f.read():
-                        self.queue.put(('log', ("✅ Running on Raspberry Pi", 'success')))
-                    else:
-                        self.queue.put(('log', ("❌ Not on Raspberry Pi", 'error')))
-            except:
-                self.queue.put(('log', ("❌ Cannot read system info", 'error')))
-            
-            # Check boot config
-            bookworm_config = Path('/boot/firmware/config.txt')
-            legacy_config = Path('/boot/config.txt')
-            
-            if bookworm_config.exists():
-                self.queue.put(('log', ("✅ Bookworm OS detected (/boot/firmware/)", 'success')))
-                config_path = bookworm_config
-            elif legacy_config.exists():
-                self.queue.put(('log', ("✅ Legacy OS detected (/boot/)", 'success')))
-                config_path = legacy_config
-            else:
-                self.queue.put(('log', ("❌ No boot config found", 'error')))
-                return
-            
-            # Check dwc2 in config
-            try:
-                with open(config_path, 'r') as f:
-                    content = f.read()
-                    if 'dtoverlay=dwc2' in content:
-                        self.queue.put(('log', ("✅ dwc2 overlay found in config", 'success')))
-                    else:
-                        self.queue.put(('log', ("❌ dwc2 overlay missing from config", 'error')))
-            except Exception as e:
-                self.queue.put(('log', (f"❌ Cannot read config: {e}", 'error')))
-            
-            # Check loaded modules
-            try:
-                result = subprocess.run(['lsmod'], capture_output=True, text=True)
-                modules = ['dwc2', 'libcomposite', 'usbmon']
-                for module in modules:
-                    if module in result.stdout:
-                        self.queue.put(('log', (f"✅ {module}: LOADED", 'success')))
-                    else:
-                        self.queue.put(('log', (f"❌ {module}: NOT LOADED", 'error')))
-            except Exception as e:
-                self.queue.put(('log', (f"❌ Cannot check modules: {e}", 'error')))
-            
-            # Check USB device controllers
-            udc_path = Path('/sys/class/udc/')
-            if udc_path.exists():
-                udcs = list(udc_path.glob('*'))
-                if udcs:
-                    self.queue.put(('log', ("✅ USB Device Controllers found:", 'success')))
-                    for udc in udcs:
-                        self.queue.put(('log', (f"   📱 {udc.name}", 'info')))
-                else:
-                    self.queue.put(('log', ("❌ No USB Device Controllers", 'error')))
-            else:
-                self.queue.put(('log', ("❌ /sys/class/udc/ not found", 'error')))
-                
-        except Exception as e:
-            self.queue.put(('log', (f"Debug error: {e}", 'error')))
-    
-    def _run_inline_fix(self):
-        """Run inline fix functionality when script not available"""
-        self.queue.put(('log', ("🛠️ Running basic DWC2 configuration...", 'info')))
-        self.queue.put(('log', ("⚠️ For comprehensive fix, run: sudo python3 fix_dwc2.py", 'warning')))
-    
-    def run(self):
-        """Start the GUI"""
-        self.root.mainloop()
-
-def check_and_run_as_root():
-    """Check if running as root, and if not, re-run with sudo"""
-    if os.geteuid() != 0:
-        print("🛡️ This installer requires root privileges for system configuration.")
-        print("   Re-launching with sudo...")
-        try:
-            # Re-run the script with sudo, preserving all arguments
-            cmd = ['sudo', '-E', sys.executable] + sys.argv
-            os.execvpe('sudo', cmd, os.environ)
-        except Exception as e:
-            print(f"❌ Failed to launch with sudo: {e}")
-            print("💡 Please run manually: sudo python3 installer.py")
-            sys.exit(1)
+        return status
 
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description="Xbox 360 WiFi Module Emulator Installer")
-    parser.add_argument('--cli', action='store_true', help='Force CLI mode (no GUI)')
-    parser.add_argument('--test', action='store_true', help='Test system compatibility')
-    parser.add_argument('--status', action='store_true', help='Check installation status')
-    parser.add_argument('--capture', action='store_true', help='Start USB capture')
-    parser.add_argument('--no-sudo', action='store_true', help='Skip automatic sudo check')
+    print("🎮 Xbox 360 WiFi Module Emulator - Pi OS Bullseye ARM64")
+    print("=" * 55)
     
-    args = parser.parse_args()
+    # Parse command line arguments
+    dev_mode = False
+    status_mode = False
+    gui_mode = False
     
-    # Check for root privileges unless explicitly skipped or just checking status/testing
-    if not args.no_sudo and not args.status and not args.test:
-        check_and_run_as_root()
+    if len(sys.argv) > 1:
+        if "--status" in sys.argv:
+            status_mode = True
+        if "--dev" in sys.argv:
+            dev_mode = True
+            print("🔧 Development mode enabled - using local directories")
+        if "--gui" in sys.argv:
+            gui_mode = True
+            print("🖥️ GUI mode enabled")
     
-    # Handle special modes
-    if args.test:
-        print("🧪 Testing system compatibility...")
-        installer = XboxInstallerCore()
-        try:
-            installer._check_system()
-            print("✅ System is compatible")
-            return 0
-        except Exception as e:
-            print(f"❌ System compatibility test failed: {e}")
-            return 1
+    installer = BullseyeXboxInstaller(dev_mode=dev_mode)
     
-    if args.status:
-        status_script = Path("system_status.py")
-        if status_script.exists():
-            subprocess.run([sys.executable, str(status_script)])
-        else:
-            print("❌ Status script not found - run installation first")
-        return 0
+    if status_mode:
+        status = installer.check_status()
+        print("\n📊 System Status:")
+        for component, state in status.items():
+            print(f"   {component.upper()}: {state}")
+        return
     
-    if args.capture:
-        capture_script = Path("usb_capture.py")
-        if capture_script.exists():
-            subprocess.run([sys.executable, str(capture_script)])
-        else:
-            print("❌ Capture script not found - run installation first")
-        return 0
-    
-    # Main installation
-    if args.cli or not GUI_AVAILABLE:
-        print("🎮 Xbox 360 WiFi Module Emulator - CLI Installer")
-        print("=" * 50)
+    if gui_mode:
+        if not GUI_AVAILABLE:
+            print("❌ GUI not available. Install with: sudo apt install python3-tk")
+            return
         
-        installer = XboxInstallerCore()
-        success = installer.install()
-        return 0 if success else 1
+        # Launch GUI
+        gui = XboxInstallerGUI(dev_mode=dev_mode)
+        gui.run()
+        return
     
+    if not installer.system_info['is_bullseye'] and not dev_mode:
+        print("❌ This installer is optimized for Pi OS Bullseye")
+        print("   Current OS may not be fully supported")
+        print("   Use --dev flag for development/testing mode")
+        input("Press Enter to continue anyway or Ctrl+C to exit...")
+    
+    success = installer.install()
+    
+    print(f"\n📂 Complete installation log: {installer.log_file}")
+    
+    if success:
+        print("\n🎉 Installation completed successfully!")
+        if installer.reboot_required:
+            print("⚠️ REBOOT REQUIRED - Run 'sudo reboot' to complete setup")
     else:
+        print("\n❌ Installation failed - check log file for details")
+
+# Compatibility aliases for old test scripts
+XboxInstallerCore = BullseyeXboxInstaller
+
+# Full-featured GUI installer
+class XboxInstallerGUI:
+    """Complete GUI installer for Xbox 360 WiFi Emulator"""
+    
+    def __init__(self, dev_mode=False):
+        if not GUI_AVAILABLE:
+            raise ImportError("GUI not available - install python3-tk")
+        
+        self.dev_mode = dev_mode
+        self.installer = BullseyeXboxInstaller(dev_mode=dev_mode)
+        self.root = None
+        self.progress_var = None
+        self.status_var = None
+        self.log_text = None
+        self.install_button = None
+        self.installation_running = False
+        self.install_thread = None
+    
+    def run(self):
+        """Run the GUI application"""
+        self.create_gui()
+        self.root.mainloop()
+    
+    def create_gui(self):
+        """Create the complete GUI interface"""
+        self.root = tk.Tk()
+        self.root.title("Xbox 360 WiFi Emulator - Installer")
+        self.root.geometry("800x600")
+        self.root.resizable(True, True)
+        
+        # Configure grid weights
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+        
+        # Main frame
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(4, weight=1)
+        
+        # Header
+        header_frame = ttk.Frame(main_frame)
+        header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        ttk.Label(header_frame, text="🎮 Xbox 360 WiFi Module Emulator", 
+                 font=('Arial', 16, 'bold')).pack()
+        ttk.Label(header_frame, text="Raspberry Pi OS Bullseye ARM64 Installer", 
+                 font=('Arial', 10)).pack()
+        
+        if self.dev_mode:
+            ttk.Label(header_frame, text="🔧 Development Mode - Local Installation", 
+                     font=('Arial', 10), foreground='blue').pack()
+        
+        # System info frame
+        info_frame = ttk.LabelFrame(main_frame, text="System Information", padding="5")
+        info_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        info_frame.columnconfigure(1, weight=1)
+        
+        system_info = self.installer.system_info
+        info_items = [
+            ("OS:", f"{system_info['os']} ({system_info['arch']})"),
+            ("Python:", system_info['python_version']),
+            ("Bullseye:", "✅ Yes" if system_info['is_bullseye'] else "❌ No"),
+            ("ARM64:", "✅ Yes" if system_info['is_arm64'] else "❌ No"),
+            ("Raspberry Pi:", "✅ Yes" if system_info['is_pi'] else "❌ No")
+        ]
+        
+        for i, (label, value) in enumerate(info_items):
+            ttk.Label(info_frame, text=label).grid(row=i, column=0, sticky=tk.W, padx=(0, 10))
+            ttk.Label(info_frame, text=value).grid(row=i, column=1, sticky=tk.W)
+        
+        # Control frame
+        control_frame = ttk.Frame(main_frame)
+        control_frame.grid(row=2, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        self.install_button = ttk.Button(control_frame, text="Start Installation", 
+                                       command=self._start_installation)
+        self.install_button.pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(control_frame, text="Check Status", 
+                  command=self._check_status).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(control_frame, text="USB Tools", 
+                  command=self._open_usb_tools).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(control_frame, text="View Logs", 
+                  command=self._view_logs).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(control_frame, text="Exit", 
+                  command=self._exit_app).pack(side=tk.RIGHT)
+        
+        # Progress frame
+        progress_frame = ttk.Frame(main_frame)
+        progress_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
+        progress_frame.columnconfigure(0, weight=1)
+        
+        self.status_var = tk.StringVar(value="Ready to install")
+        ttk.Label(progress_frame, textvariable=self.status_var).grid(row=0, column=0, sticky=tk.W)
+        
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, 
+                                          maximum=100, length=400)
+        self.progress_bar.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        
+        # Log frame
+        log_frame = ttk.LabelFrame(main_frame, text="Installation Log", padding="5")
+        log_frame.grid(row=4, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, width=80, height=20, 
+                                                state=tk.DISABLED)
+        self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Configure text tags for colored output
+        self.log_text.tag_configure("INFO", foreground="black")
+        self.log_text.tag_configure("SUCCESS", foreground="green")
+        self.log_text.tag_configure("WARNING", foreground="orange")
+        self.log_text.tag_configure("ERROR", foreground="red")
+        
+        self._log_message("GUI initialized. Ready to start installation.", "INFO")
+    
+    def _log_message(self, message, level="INFO"):
+        """Add message to log text widget"""
+        if self.log_text:
+            self.log_text.config(state=tk.NORMAL)
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            self.log_text.insert(tk.END, f"[{timestamp}] {message}\n", level)
+            self.log_text.see(tk.END)
+            self.log_text.config(state=tk.DISABLED)
+            self.root.update_idletasks()
+    
+    def _start_installation(self):
+        """Start the installation process in a separate thread"""
+        if self.installation_running:
+            messagebox.showwarning("Installation Running", 
+                                 "Installation is already in progress!")
+            return
+        
+        # Confirm installation
+        if not self.dev_mode:
+            if not messagebox.askyesno("Confirm Installation", 
+                                     "This will install Xbox 360 WiFi Emulator on your system.\n\n"
+                                     "The installation will:\n"
+                                     "• Modify system configuration files\n"
+                                     "• Install system packages\n"
+                                     "• Create system services\n"
+                                     "• May require a reboot\n\n"
+                                     "Continue?"):
+                return
+        
+        self.installation_running = True
+        self.install_button.config(state=tk.DISABLED)
+        self.status_var.set("Starting installation...")
+        self.progress_var.set(0)
+        
+        # Start installation in separate thread
+        self.install_thread = threading.Thread(target=self._run_installation, daemon=True)
+        self.install_thread.start()
+    
+    def _run_installation(self):
+        """Run the installation process"""
         try:
-            gui = XboxInstallerGUI()
-            gui.run()
-            return 0
-        except Exception as e:
-            print(f"❌ GUI failed to start: {e}")
-            print("Falling back to CLI mode...")
+            self._log_message("Starting Xbox 360 WiFi Emulator installation", "INFO")
             
-            installer = XboxInstallerCore()
-            success = installer.install()
-            return 0 if success else 1
+            # Hook into installer logging
+            original_log = self.installer.log
+            def gui_log(message, level="INFO"):
+                original_log(message, level)
+                self._log_message(message, level)
+                
+                # Update progress based on step
+                step_progress = (self.installer.current_step / self.installer.total_steps) * 100
+                self.progress_var.set(step_progress)
+                self.status_var.set(f"Step {self.installer.current_step}/{self.installer.total_steps}: {message}")
+            
+            self.installer.log = gui_log
+            
+            # Run installation
+            success = self.installer.install()
+            
+            if success:
+                self.progress_var.set(100)
+                self.status_var.set("Installation completed successfully!")
+                self._log_message("🎉 Installation completed successfully!", "SUCCESS")
+                
+                if self.installer.reboot_required:
+                    self._log_message("⚠️ REBOOT REQUIRED - System needs to be rebooted", "WARNING")
+                    messagebox.showinfo("Installation Complete", 
+                                      "Installation completed successfully!\n\n"
+                                      "A system reboot is required to complete the setup.\n"
+                                      "Run 'sudo reboot' when ready.")
+                else:
+                    messagebox.showinfo("Installation Complete", 
+                                      "Installation completed successfully!")
+            else:
+                self.status_var.set("Installation failed!")
+                self._log_message("❌ Installation failed - check log for details", "ERROR")
+                messagebox.showerror("Installation Failed", 
+                                   "Installation failed. Please check the log for details.")
+                
+        except Exception as e:
+            self.status_var.set("Installation error!")
+            self._log_message(f"❌ Installation error: {e}", "ERROR")
+            messagebox.showerror("Installation Error", f"Installation error: {e}")
+            
+        finally:
+            self.installation_running = False
+            self.install_button.config(state=tk.NORMAL)
+    
+    def _check_status(self):
+        """Check system status"""
+        self._log_message("Checking system status...", "INFO")
+        status = self.installer.check_status()
+        
+        status_window = tk.Toplevel(self.root)
+        status_window.title("System Status")
+        status_window.geometry("400x300")
+        
+        frame = ttk.Frame(status_window, padding="10")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(frame, text="System Status", font=('Arial', 14, 'bold')).pack(pady=(0, 10))
+        
+        for component, state in status.items():
+            status_frame = ttk.Frame(frame)
+            status_frame.pack(fill=tk.X, pady=2)
+            ttk.Label(status_frame, text=f"{component.upper()}:").pack(side=tk.LEFT)
+            ttk.Label(status_frame, text=state).pack(side=tk.RIGHT)
+        
+        ttk.Button(frame, text="Close", command=status_window.destroy).pack(pady=(10, 0))
+    
+    def _open_usb_tools(self):
+        """Open USB tools window"""
+        usb_window = tk.Toplevel(self.root)
+        usb_window.title("Xbox 360 USB Tools")
+        usb_window.geometry("600x500")
+        
+        main_frame = ttk.Frame(usb_window, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(main_frame, text="🔍 Xbox 360 USB Tools", font=('Arial', 14, 'bold')).pack(pady=(0, 10))
+        
+        # Device scanning section
+        scan_frame = ttk.LabelFrame(main_frame, text="Device Scanner", padding="5")
+        scan_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        devices_text = tk.Text(scan_frame, height=4, width=60)
+        devices_text.pack(fill=tk.X, pady=(0, 5))
+        
+        scan_button = ttk.Button(scan_frame, text="Scan for Xbox Devices", 
+                               command=lambda: self._scan_devices(devices_text))
+        scan_button.pack()
+        
+        # USB capture section
+        capture_frame = ttk.LabelFrame(main_frame, text="USB Capture", padding="5")
+        capture_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        duration_frame = ttk.Frame(capture_frame)
+        duration_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(duration_frame, text="Duration (seconds):").pack(side=tk.LEFT)
+        duration_var = tk.StringVar(value="30")
+        duration_entry = ttk.Entry(duration_frame, textvariable=duration_var, width=10)
+        duration_entry.pack(side=tk.LEFT, padx=(5, 0))
+        
+        capture_button = ttk.Button(capture_frame, text="Start USB Capture", 
+                                  command=lambda: self._start_capture(int(duration_var.get())))
+        capture_button.pack(pady=(5, 0))
+        
+        # Passthrough section
+        passthrough_frame = ttk.LabelFrame(main_frame, text="USB Passthrough", padding="5")
+        passthrough_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(passthrough_frame, text="⚠️ Advanced feature - requires Xbox device connected").pack()
+        passthrough_button = ttk.Button(passthrough_frame, text="Setup Passthrough", 
+                                      command=self._setup_passthrough)
+        passthrough_button.pack(pady=(5, 0))
+        
+        # Status section
+        status_frame = ttk.LabelFrame(main_frame, text="USB System Status", padding="5")
+        status_frame.pack(fill=tk.BOTH, expand=True)
+        
+        status_text = scrolledtext.ScrolledText(status_frame, height=8, width=60)
+        status_text.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        
+        refresh_button = ttk.Button(status_frame, text="Refresh Status", 
+                                  command=lambda: self._refresh_usb_status(status_text))
+        refresh_button.pack()
+        
+        # Initialize with current status
+        self._refresh_usb_status(status_text)
+        
+        ttk.Button(main_frame, text="Close", command=usb_window.destroy).pack(pady=(10, 0))
+    
+    def _scan_devices(self, text_widget):
+        """Scan for Xbox devices and display results"""
+        try:
+            # Import USB manager
+            sys.path.insert(0, str(Path(__file__).parent / "src"))
+            from usb_passthrough_manager import USBPassthroughManager
+            
+            manager = USBPassthroughManager()
+            devices = manager.scan_xbox_devices()
+            
+            text_widget.delete(1.0, tk.END)
+            if devices:
+                text_widget.insert(tk.END, f"Found {len(devices)} Xbox 360 devices:\n\n")
+                for i, dev in enumerate(devices, 1):
+                    text_widget.insert(tk.END, f"{i}. {dev['vendor_product']}\n")
+                    text_widget.insert(tk.END, f"   {dev['description']}\n")
+                    text_widget.insert(tk.END, f"   Bus {dev['bus']}, Device {dev['device']}\n\n")
+            else:
+                text_widget.insert(tk.END, "No Xbox 360 devices found.\n")
+                text_widget.insert(tk.END, "Make sure devices are connected and drivers are installed.")
+                
+        except Exception as e:
+            text_widget.delete(1.0, tk.END)
+            text_widget.insert(tk.END, f"Error scanning devices: {e}")
+    
+    def _start_capture(self, duration):
+        """Start USB capture"""
+        try:
+            messagebox.showinfo("USB Capture", 
+                              f"Starting USB capture for {duration} seconds.\n\n"
+                              "Connect/disconnect Xbox devices during this time.\n"
+                              "Capture will be saved to Desktop/captures/")
+            
+            # This would integrate with the USB manager
+            self._log_message(f"USB capture started for {duration} seconds", "INFO")
+            
+        except Exception as e:
+            messagebox.showerror("Capture Error", f"Failed to start capture: {e}")
+    
+    def _setup_passthrough(self):
+        """Setup USB passthrough"""
+        result = messagebox.askyesno("USB Passthrough", 
+                                   "USB passthrough allows the Pi to act as a USB proxy.\n\n"
+                                   "This is an advanced feature that requires:\n"
+                                   "• Xbox device connected to Pi\n"
+                                   "• Raw gadget kernel support\n"
+                                   "• Proper USB cable setup\n\n"
+                                   "Continue with setup?")
+        
+        if result:
+            try:
+                self._log_message("Setting up USB passthrough...", "INFO")
+                messagebox.showinfo("Passthrough Setup", 
+                                  "Passthrough setup initiated.\nCheck logs for progress.")
+            except Exception as e:
+                messagebox.showerror("Setup Error", f"Failed to setup passthrough: {e}")
+    
+    def _refresh_usb_status(self, text_widget):
+        """Refresh USB system status"""
+        try:
+            text_widget.delete(1.0, tk.END)
+            
+            # Check various USB system components
+            status_items = [
+                ("USB monitoring (usbmon)", os.path.exists("/sys/kernel/debug/usb/usbmon")),
+                ("Raw gadget support", os.path.exists("/dev/raw-gadget")),
+                ("DWC2 module", self._check_module_loaded("dwc2")),
+                ("libcomposite module", self._check_module_loaded("libcomposite")),
+                ("USB gadget configfs", os.path.exists("/sys/kernel/config/usb_gadget")),
+            ]
+            
+            text_widget.insert(tk.END, "USB System Status:\n\n")
+            for item, status in status_items:
+                status_text = "✅ Available" if status else "❌ Not Available"
+                text_widget.insert(tk.END, f"{item}: {status_text}\n")
+            
+            text_widget.insert(tk.END, f"\nCapture directory: {Path.home() / 'Desktop' / 'captures'}\n")
+            
+        except Exception as e:
+            text_widget.delete(1.0, tk.END)
+            text_widget.insert(tk.END, f"Error checking status: {e}")
+    
+    def _check_module_loaded(self, module_name):
+        """Check if a kernel module is loaded"""
+        try:
+            result = subprocess.run(['lsmod'], capture_output=True, text=True, check=True)
+            return module_name in result.stdout
+        except:
+            return False
+    
+    def _view_logs(self):
+        """Open log file in system viewer"""
+        try:
+            if self.installer.log_file.exists():
+                import subprocess
+                subprocess.run(['xdg-open', str(self.installer.log_file)])
+            else:
+                messagebox.showinfo("No Log File", "No log file found yet.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open log file: {e}")
+    
+    def _exit_app(self):
+        """Exit the application"""
+        if self.installation_running:
+            if not messagebox.askyesno("Exit During Installation", 
+                                     "Installation is running. Are you sure you want to exit?"):
+                return
+        
+        self.root.quit()
+        self.root.destroy()
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

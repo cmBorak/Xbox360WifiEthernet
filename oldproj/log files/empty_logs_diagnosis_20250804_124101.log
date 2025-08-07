@@ -1,0 +1,39 @@
+[12:41:01] [INFO] 🚀 Empty Logs Diagnosis Started
+[12:41:01] [INFO] ==================================================
+[12:41:01] [INFO] 🔍 Checking System Environment
+[12:41:01] [INFO] DISPLAY: :0
+[12:41:01] [INFO] Desktop Session: LXDE-pi-labwc
+[12:41:01] [INFO] XDG Current Desktop: labwc:wlroots
+[12:41:01] [INFO] Python Version: 3.11.2 (main, Apr 28 2025, 14:11:48) [GCC 12.2.0]
+[12:41:01] [INFO] Python Executable: /usr/bin/python3
+[12:41:01] [INFO] 
+==============================
+[12:41:01] [INFO] 🔍 Diagnosing Python Import Issues
+[12:41:01] [SUCCESS] ✅ tkinter: OK (GUI framework)
+[12:41:01] [SUCCESS] ✅ pathlib: OK (Path handling)
+[12:41:01] [SUCCESS] ✅ subprocess: OK (System commands)
+[12:41:01] [SUCCESS] ✅ threading: OK (Threading support)
+[12:41:01] [SUCCESS] ✅ queue: OK (Queue operations)
+[12:41:01] [SUCCESS] ✅ platform: OK (Platform info)
+[12:41:01] [SUCCESS] ✅ datetime: OK (Date/time functions)
+[12:41:01] [SUCCESS] ✅ os: OK (Operating system interface)
+[12:41:01] [SUCCESS] ✅ sys: OK (System interface)
+[12:41:01] [INFO] 
+==============================
+[12:41:01] [INFO] 🔍 Testing Installer Module Import
+[12:41:01] [INFO] Script directory: /home/chris/Desktop/Xbox360WifiEthernet
+[12:41:01] [ERROR] ❌ Installer import failed: cannot import name 'XboxInstaller' from 'installer' (/home/chris/Desktop/Xbox360WifiEthernet/installer.py)
+[12:41:01] [ERROR] Import traceback: Traceback (most recent call last):
+  File "/home/chris/Desktop/Xbox360WifiEthernet/diagnose_empty_logs.py", line 94, in test_installer_import
+    from installer import XboxInstaller
+ImportError: cannot import name 'XboxInstaller' from 'installer' (/home/chris/Desktop/Xbox360WifiEthernet/installer.py)
+
+[12:41:01] [INFO] 
+==================================================
+[12:41:01] [INFO] 📊 Diagnosis Summary
+[12:41:01] [INFO] ====================
+[12:41:01] [SUCCESS] ✅ All imports successful
+[12:41:01] [ERROR] Installer import: ❌ FAILED
+[12:41:01] [INFO] ==================================================
+[12:41:01] [SUCCESS] ✅ Diagnosis Complete
+[12:41:01] [INFO] 📂 Full diagnosis log: /home/chris/Desktop/debuglogs/empty_logs_diagnosis_20250804_124101.log

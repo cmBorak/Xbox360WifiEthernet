@@ -1,0 +1,17 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xbox 360 WiFi Emulator
+Comment=Install and manage Xbox 360 WiFi Module Emulator (GUI)
+Exec=bash -c 'cd "/home/chris/Xbox360WifiEthernet" && python3 installer.py || (echo "Failed to start installer"; echo "Trying alternative path..."; cd "$(dirname "$(readlink -f "%k")")" && python3 installer.py || (echo "Error: installer.py not found"; echo "Current directory: $(pwd)"; echo "Files: $(ls -la *.py 2>/dev/null || echo None)"; read -p "Press Enter to close..."))'
+Icon=network-wireless
+Terminal=false
+Categories=System;Network;
+StartupNotify=true
+Path=/home/chris/Xbox360WifiEthernet
+
+[Desktop Action Terminal]
+Name=Open in Terminal
+Exec=bash -c 'cd "/home/chris/Xbox360WifiEthernet" && x-terminal-emulator -e bash || x-terminal-emulator -e bash -c "cd \"/home/chris/Xbox360WifiEthernet\" && bash"'
+
+Actions=Terminal;

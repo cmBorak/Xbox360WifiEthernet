@@ -1,0 +1,187 @@
+# Docker Compose for Xbox 360 Emulation with Automated Testing
+# Designed for Raspberry Pi 4 with GitHub integration
+
+version: '3.8'
+
+services:
+  xbox360-emulator:
+    build: .
+    container_name: xbox360-emulator
+    privileged: true
+    network_mode: host
+    restart: unless-stopped
+    
+    environment:
+      - START_TESTING_DAEMON=true
+      - LOG_LEVEL=INFO
+      - GITHUB_REPO=${GITHUB_REPO:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED:-true}
+      - UPDATE_CHECK_INTERVAL=${UPDATE_CHECK_INTERVAL:-3600}
+      - PYTHONPATH=/app/src
+    
+    volumes:
+      # Persistent data
+      - ./test-results:/app/test-results
+      - ./logs:/app/logs
+      - ./debug-data:/app/debug-data
+      - ./backup:/app/backup
+      
+      # System access for USB gadget functionality
+      - /sys/kernel/config:/sys/kernel/config
+      - /sys/class/udc:/sys/class/udc
+      - /proc:/proc:ro
+      - /dev:/dev
+      
+      # Network configuration
+      - /etc/network:/etc/network:ro
+      - /var/run/dhcp:/var/run/dhcp
+      
+      # For automatic updates
+      - ./git-credentials:/app/.git-credentials:ro
+    
+    devices:
+      - /dev/mem:/dev/mem
+    
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+      - SYS_RAWIO
+    
+    labels:
+      - "autoupdate.enable=true"
+      - "autoupdate.monitor=/app"
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # GitHub webhook listener for automatic updates
+  github-updater:
+    build:
+      context: .
+      dockerfile: Dockerfile.updater
+    container_name: xbox360-github-updater
+    restart: unless-stopped
+    
+    environment:
+      - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET:-}
+      - MAIN_CONTAINER=xbox360-emulator
+      - UPDATE_BRANCH=${UPDATE_BRANCH:-main}
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/app/project
+      - ./logs:/app/logs
+    
+    ports:
+      - "9000:9000"
+    
+    depends_on:
+      - xbox360-emulator
+    
+    labels:
+      - "webhook.enable=true"
+
+  # Log aggregator and analysis
+  log-analyzer:
+    image: python:3.11-slim
+    container_name: xbox360-log-analyzer
+    restart: unless-stopped
+    
+    volumes:
+      - ./logs:/logs:ro
+      - ./test-results:/test-results:ro
+      - ./debug-data:/debug-data
+    
+    environment:
+      - LOG_ANALYSIS_INTERVAL=300
+      - ALERT_THRESHOLD_ERRORS=10
+      - ALERT_THRESHOLD_FAILURES=5
+    
+    command: >
+      sh -c "
+        pip install watchdog pandas matplotlib seaborn &&
+        python -c '
+        import time
+        import json
+        import glob
+        from datetime import datetime, timedelta
+        from collections import defaultdict
+        
+        def analyze_logs():
+            errors = defaultdict(int)
+            failures = defaultdict(int)
+            
+            # Analyze test results
+            for file in glob.glob(\"/test-results/*.json\"):
+                try:
+                    with open(file) as f:
+                        data = json.load(f)
+                        if \"results\" in data:
+                            for result in data[\"results\"]:
+                                if result[\"status\"] == \"fail\":
+                                    failures[result[\"test_name\"]] += 1
+                                elif result[\"status\"] == \"error\": 
+                                    errors[result[\"test_name\"]] += 1
+                except: pass
+            
+            # Save analysis
+            analysis = {
+                \"timestamp\": datetime.now().isoformat(),
+                \"total_errors\": sum(errors.values()),
+                \"total_failures\": sum(failures.values()),
+                \"error_patterns\": dict(errors),
+                \"failure_patterns\": dict(failures)
+            }
+            
+            with open(\"/debug-data/log_analysis.json\", \"w\") as f:
+                json.dump(analysis, f, indent=2)
+            
+            print(f\"Analysis complete - Errors: {sum(errors.values())}, Failures: {sum(failures.values())}\")
+        
+        while True:
+            analyze_logs()
+            time.sleep(int(os.environ.get(\"LOG_ANALYSIS_INTERVAL\", 300)))
+        '"
+
+  # Web dashboard
+  dashboard:
+    image: python:3.11-slim
+    container_name: xbox360-dashboard
+    restart: unless-stopped
+    
+    volumes:
+      - ./test-results:/test-results:ro
+      - ./logs:/logs:ro
+      - ./debug-data:/debug-data:ro
+      - .:/app/project:ro
+    
+    ports:
+      - "8080:8080"
+    
+    environment:
+      - DASHBOARD_PORT=8080
+      - REFRESH_INTERVAL=30
+    
+    command: >
+      sh -c "
+        pip install flask flask-cors plotly &&
+        python /app/project/web_dashboard.py
+      "
+    
+    depends_on:
+      - xbox360-emulator
+
+volumes:
+  test-results:
+  logs:
+  debug-data:
+  backup:
+
+networks:
+  default:
+    driver: bridge

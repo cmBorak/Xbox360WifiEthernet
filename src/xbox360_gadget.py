@@ -141,8 +141,50 @@ class Xbox360Gadget:
         
         logger.info("✅ USB gadget structure created")
     
+    def create_network_function(self):
+        """Create USB Ethernet function to create usb0 interface"""
+        logger.info("Creating USB Ethernet function for usb0 interface...")
+        
+        # Create ECM (Ethernet Control Model) function for network interface
+        function_path = self.gadget_path / "functions" / "ecm.usb0"
+        os.makedirs(function_path, exist_ok=True)
+        
+        # Set MAC addresses
+        import random
+        
+        # Generate deterministic MAC addresses based on Pi serial
+        serial = self._get_serial_number()
+        seed = int(serial[-8:], 16) if len(serial) >= 8 else 12345
+        random.seed(seed)
+        
+        # Host MAC (what the Pi appears as to the host)
+        host_mac = f"02:{random.randint(0,255):02x}:{random.randint(0,255):02x}:{random.randint(0,255):02x}:{random.randint(0,255):02x}:{random.randint(0,255):02x}"
+        
+        # Device MAC (what the Pi uses internally)
+        random.seed(seed + 1)  # Different seed for device MAC
+        dev_mac = f"02:{random.randint(0,255):02x}:{random.randint(0,255):02x}:{random.randint(0,255):02x}:{random.randint(0,255):02x}:{random.randint(0,255):02x}"
+        
+        self._write_file(function_path / "host_addr", host_mac)
+        self._write_file(function_path / "dev_addr", dev_mac)
+        
+        logger.info(f"Host MAC: {host_mac}")
+        logger.info(f"Device MAC: {dev_mac}")
+        
+        # Link function to configuration
+        config_path = self.gadget_path / "configs" / "c.1"
+        link_path = config_path / "ecm.usb0"
+        
+        # Remove existing link if it exists
+        if link_path.exists():
+            os.unlink(link_path)
+        
+        # Create symlink
+        os.symlink("../../functions/ecm.usb0", link_path)
+        
+        logger.info("✅ USB Ethernet function created - will create usb0 interface")
+    
     def create_functionfs_function(self):
-        """Create FunctionFS function for Xbox authentication"""
+        """Create FunctionFS function for Xbox authentication (optional)"""
         logger.info("Creating FunctionFS function for Xbox 360...")
         
         function_path = self.gadget_path / "functions" / "ffs.xbox360"
@@ -230,18 +272,26 @@ class Xbox360Gadget:
         
         return status
     
-    def setup_complete_gadget(self):
+    def setup_complete_gadget(self, create_network=True, create_functionfs=False):
         """Complete gadget setup process"""
         logger.info("🎮 Setting up Xbox 360 WiFi Module Emulator...")
         
         try:
             self.check_prerequisites()
             self.create_gadget()
-            self.create_functionfs_function()  # Use FunctionFS for Xbox auth
-            # Note: Gadget activation is handled by FunctionFS after descriptors are written
             
-            logger.info("🎮 Xbox 360 WiFi Adapter gadget structure ready!")
-            logger.info("   FunctionFS will activate when descriptors are written")
+            if create_network:
+                self.create_network_function()  # Creates usb0 interface
+                
+            if create_functionfs:
+                self.create_functionfs_function()  # For Xbox authentication
+            
+            # Activate the gadget
+            self.activate_gadget()
+            
+            logger.info("🎮 Xbox 360 WiFi Adapter gadget activated!")
+            if create_network:
+                logger.info("   usb0 network interface should be available")
             return True
             
         except Exception as e:

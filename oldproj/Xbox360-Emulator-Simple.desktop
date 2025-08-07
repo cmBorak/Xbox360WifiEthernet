@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xbox 360 WiFi Emulator (Terminal)
+Comment=Xbox 360 WiFi Module Emulator - Terminal Launcher
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "%k")")"; cd "$SCRIPT_DIR" && if [ -f installer.py ]; then python3 installer.py; else echo "installer.py not found in $SCRIPT_DIR"; echo "Please place this desktop file in the Xbox360WifiEthernet directory."; read -p "Press Enter to close..."; fi'
+Icon=network-wireless
+Terminal=true
+Categories=System;Network;
+StartupNotify=true

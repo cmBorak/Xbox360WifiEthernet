@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xbox 360 WiFi Emulator (Terminal)
+Comment=Install and manage Xbox 360 WiFi Module Emulator (Terminal Mode)
+Exec=bash -c 'cd "/home/chris/Xbox360WifiEthernet" && python3 installer.py; read -p "Press Enter to close..."'
+Icon=network-wireless
+Terminal=true
+Categories=System;Network;
+StartupNotify=true
+Path=/home/chris/Xbox360WifiEthernet

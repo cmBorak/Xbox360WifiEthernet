@@ -1,0 +1,390 @@
+# Dockerfile for GitHub Auto-Updater Service
+# Listens for GitHub webhooks and automatically updates the application
+
+FROM python:3.11-slim
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    docker.io \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages
+RUN pip install flask requests docker GitPython
+
+# Create app user
+RUN useradd -m -u 1000 autoupdate
+
+# Create app directory
+WORKDIR /app
+RUN chown autoupdate:autoupdate /app
+
+# Copy updater script
+COPY --chown=autoupdate:autoupdate github_updater.py .
+
+# Switch to app user
+USER autoupdate
+
+# Create the GitHub updater script
+RUN cat > github_updater.py << 'EOF'
+#!/usr/bin/env python3
+"""
+GitHub Auto-Updater Service for Xbox 360 Emulation Project
+Listens for GitHub webhooks and automatically updates the containerized application
+"""
+
+import os
+import json
+import hmac
+import hashlib
+import subprocess
+import logging
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+from flask import Flask, request, jsonify
+import docker
+import git
+
+app = Flask(__name__)
+
+# Configuration
+GITHUB_WEBHOOK_SECRET = os.environ.get('GITHUB_WEBHOOK_SECRET', '')
+MAIN_CONTAINER = os.environ.get('MAIN_CONTAINER', 'xbox360-emulator')
+UPDATE_BRANCH = os.environ.get('UPDATE_BRANCH', 'main')
+PROJECT_PATH = '/app/project'
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('/app/logs/updater.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Docker client
+docker_client = docker.from_env()
+
+class AutoUpdater:
+    def __init__(self):
+        self.update_lock = threading.Lock()
+        self.last_update = None
+        self.update_history = []
+    
+    def verify_webhook_signature(self, payload, signature):
+        """Verify GitHub webhook signature"""
+        if not GITHUB_WEBHOOK_SECRET:
+            logger.warning("No webhook secret configured, skipping verification")
+            return True
+        
+        expected_signature = hmac.new(
+            GITHUB_WEBHOOK_SECRET.encode('utf-8'),
+            payload,
+            hashlib.sha256
+        ).hexdigest()
+        
+        return hmac.compare_digest(f"sha256={expected_signature}", signature)
+    
+    def get_current_commit_hash(self):
+        """Get current commit hash from the project"""
+        try:
+            repo = git.Repo(PROJECT_PATH)
+            return repo.head.object.hexsha
+        except Exception as e:
+            logger.error(f"Error getting current commit hash: {e}")
+            return None
+    
+    def backup_current_state(self):
+        """Backup current application state"""
+        try:
+            backup_dir = Path(f"/app/project/backup/{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Backup test results and logs
+            subprocess.run([
+                'cp', '-r', '/app/project/test-results', str(backup_dir)
+            ], check=False)
+            
+            subprocess.run([
+                'cp', '-r', '/app/project/logs', str(backup_dir)
+            ], check=False)
+            
+            # Save current commit hash
+            current_hash = self.get_current_commit_hash()
+            if current_hash:
+                with open(backup_dir / 'commit_hash.txt', 'w') as f:
+                    f.write(current_hash)
+            
+            logger.info(f"Backup created: {backup_dir}")
+            return str(backup_dir)
+            
+        except Exception as e:
+            logger.error(f"Backup failed: {e}")
+            return None
+    
+    def pull_latest_code(self):
+        """Pull latest code from GitHub"""
+        try:
+            repo = git.Repo(PROJECT_PATH)
+            origin = repo.remotes.origin
+            
+            # Fetch latest changes
+            origin.fetch()
+            
+            # Get current and latest commit hashes
+            current_hash = repo.head.object.hexsha
+            latest_hash = repo.refs[f'origin/{UPDATE_BRANCH}'].object.hexsha
+            
+            if current_hash == latest_hash:
+                logger.info("Already up to date")
+                return False, "No updates available"
+            
+            # Pull latest changes
+            origin.pull(UPDATE_BRANCH)
+            
+            logger.info(f"Updated from {current_hash[:8]} to {latest_hash[:8]}")
+            return True, f"Updated to {latest_hash[:8]}"
+            
+        except Exception as e:
+            logger.error(f"Git pull failed: {e}")
+            return False, str(e)
+    
+    def run_tests(self):
+        """Run automated tests before deployment"""
+        try:
+            logger.info("Running pre-deployment tests...")
+            
+            result = subprocess.run([
+                'python', f'{PROJECT_PATH}/run_tests.sh', 'critical'
+            ], capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0:
+                logger.info("Pre-deployment tests passed")
+                return True, "Tests passed"
+            else:
+                logger.error(f"Pre-deployment tests failed: {result.stderr}")
+                return False, f"Tests failed: {result.stderr}"
+                
+        except subprocess.TimeoutExpired:
+            logger.error("Pre-deployment tests timed out")
+            return False, "Tests timed out"
+        except Exception as e:
+            logger.error(f"Error running tests: {e}")
+            return False, str(e)
+    
+    def update_container(self):
+        """Update and restart the main container"""
+        try:
+            # Stop current container
+            logger.info(f"Stopping container: {MAIN_CONTAINER}")
+            container = docker_client.containers.get(MAIN_CONTAINER)
+            container.stop(timeout=30)
+            container.remove()
+            
+            # Rebuild and start container
+            logger.info("Rebuilding container...")
+            image = docker_client.images.build(
+                path=PROJECT_PATH,
+                tag=f"{MAIN_CONTAINER}:latest",
+                rm=True
+            )[0]
+            
+            logger.info("Starting updated container...")
+            docker_client.containers.run(
+                image.id,
+                name=MAIN_CONTAINER,
+                detach=True,
+                restart_policy={"Name": "unless-stopped"},
+                # Add other container configuration as needed
+                privileged=True,
+                network_mode="host",
+                volumes={
+                    f"{PROJECT_PATH}/test-results": {"bind": "/app/test-results", "mode": "rw"},
+                    f"{PROJECT_PATH}/logs": {"bind": "/app/logs", "mode": "rw"},
+                    f"{PROJECT_PATH}/debug-data": {"bind": "/app/debug-data", "mode": "rw"},
+                    "/sys/kernel/config": {"bind": "/sys/kernel/config", "mode": "rw"},
+                    "/sys/class/udc": {"bind": "/sys/class/udc", "mode": "ro"},
+                    "/proc": {"bind": "/proc", "mode": "ro"},
+                    "/dev": {"bind": "/dev", "mode": "rw"}
+                },
+                environment={
+                    "START_TESTING_DAEMON": "true",
+                    "LOG_LEVEL": "INFO"
+                }
+            )
+            
+            logger.info("Container updated and restarted successfully")
+            return True, "Container updated"
+            
+        except Exception as e:
+            logger.error(f"Container update failed: {e}")
+            return False, str(e)
+    
+    def rollback_update(self, backup_path):
+        """Rollback to previous state"""
+        try:
+            if not backup_path or not Path(backup_path).exists():
+                return False, "No backup available"
+            
+            # Read previous commit hash
+            commit_file = Path(backup_path) / 'commit_hash.txt'
+            if commit_file.exists():
+                with open(commit_file) as f:
+                    previous_hash = f.read().strip()
+                
+                # Reset git to previous commit
+                repo = git.Repo(PROJECT_PATH)
+                repo.git.reset('--hard', previous_hash)
+                
+                logger.info(f"Rolled back to commit {previous_hash}")
+            
+            # Restore test results and logs
+            subprocess.run([
+                'cp', '-r', f'{backup_path}/test-results', PROJECT_PATH
+            ], check=False)
+            
+            subprocess.run([
+                'cp', '-r', f'{backup_path}/logs', PROJECT_PATH
+            ], check=False)
+            
+            # Update container with rollback
+            success, message = self.update_container()
+            if success:
+                return True, f"Rollback successful to {previous_hash[:8]}"
+            else:
+                return False, f"Rollback failed: {message}"
+                
+        except Exception as e:
+            logger.error(f"Rollback failed: {e}")
+            return False, str(e)
+    
+    def perform_update(self):
+        """Perform complete update process"""
+        with self.update_lock:
+            update_record = {
+                'timestamp': datetime.now().isoformat(),
+                'success': False,
+                'backup_path': None,
+                'error': None
+            }
+            
+            try:
+                logger.info("Starting automatic update process")
+                
+                # Step 1: Backup current state
+                backup_path = self.backup_current_state()
+                update_record['backup_path'] = backup_path
+                
+                if not backup_path:
+                    raise Exception("Backup failed")
+                
+                # Step 2: Pull latest code
+                code_updated, pull_message = self.pull_latest_code()
+                if not code_updated:
+                    logger.info(f"Update skipped: {pull_message}")
+                    return True, pull_message
+                
+                # Step 3: Run pre-deployment tests
+                tests_passed, test_message = self.run_tests()
+                if not tests_passed:
+                    logger.error("Pre-deployment tests failed, rolling back")
+                    rollback_success, rollback_message = self.rollback_update(backup_path)
+                    raise Exception(f"Tests failed: {test_message}. Rollback: {rollback_message}")
+                
+                # Step 4: Update container
+                container_updated, container_message = self.update_container()
+                if not container_updated:
+                    logger.error("Container update failed, rolling back")
+                    rollback_success, rollback_message = self.rollback_update(backup_path)
+                    raise Exception(f"Container update failed: {container_message}. Rollback: {rollback_message}")
+                
+                # Success
+                update_record['success'] = True
+                self.last_update = datetime.now()
+                logger.info("Automatic update completed successfully")
+                
+                return True, "Update completed successfully"
+                
+            except Exception as e:
+                update_record['error'] = str(e)
+                logger.error(f"Update failed: {e}")
+                return False, str(e)
+            
+            finally:
+                self.update_history.append(update_record)
+                # Keep only last 10 update records
+                self.update_history = self.update_history[-10:]
+
+updater = AutoUpdater()
+
+@app.route('/webhook', methods=['POST'])
+def handle_webhook():
+    """Handle GitHub webhook"""
+    try:
+        signature = request.headers.get('X-Hub-Signature-256')
+        payload = request.get_data()
+        
+        # Verify signature
+        if not updater.verify_webhook_signature(payload, signature):
+            logger.warning("Invalid webhook signature")
+            return jsonify({'error': 'Invalid signature'}), 401
+        
+        data = json.loads(payload)
+        
+        # Check if this is a push to the target branch
+        if (data.get('ref') == f'refs/heads/{UPDATE_BRANCH}' and 
+            data.get('repository', {}).get('full_name')):
+            
+            logger.info(f"Received push webhook for {UPDATE_BRANCH} branch")
+            
+            # Perform update in background thread
+            threading.Thread(target=lambda: updater.perform_update()).start()
+            
+            return jsonify({'status': 'update_started'}), 200
+        
+        return jsonify({'status': 'ignored'}), 200
+        
+    except Exception as e:
+        logger.error(f"Webhook handling error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/status', methods=['GET'])
+def get_status():
+    """Get updater status"""
+    return jsonify({
+        'last_update': updater.last_update.isoformat() if updater.last_update else None,
+        'update_history': updater.update_history,
+        'container_running': is_container_running(),
+        'current_commit': updater.get_current_commit_hash()
+    })
+
+@app.route('/manual-update', methods=['POST'])
+def manual_update():
+    """Trigger manual update"""
+    success, message = updater.perform_update()
+    return jsonify({
+        'success': success,
+        'message': message
+    })
+
+def is_container_running():
+    """Check if main container is running"""
+    try:
+        container = docker_client.containers.get(MAIN_CONTAINER)
+        return container.status == 'running'
+    except:
+        return False
+
+if __name__ == '__main__':
+    logger.info("Starting GitHub Auto-Updater Service")
+    app.run(host='0.0.0.0', port=9000)
+EOF
+
+EXPOSE 9000
+CMD ["python", "github_updater.py"]

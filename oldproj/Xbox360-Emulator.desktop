@@ -1,0 +1,21 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Xbox 360 WiFi Emulator
+Comment=Install and manage Xbox 360 WiFi Module Emulator
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "%k")")"; cd "$SCRIPT_DIR" && if [ -f installer.py ]; then python3 installer.py; else zenity --error --text="installer.py not found in $SCRIPT_DIR. Please place this desktop file in the Xbox360WifiEthernet directory."; fi'
+Icon=network-wireless
+Terminal=false
+Categories=System;Network;
+StartupNotify=true
+MimeType=application/x-executable;
+
+[Desktop Action Install]
+Name=Install Emulator
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "%k")")"; cd "$SCRIPT_DIR" && if [ -f installer.py ]; then python3 installer.py; else zenity --error --text="installer.py not found in $SCRIPT_DIR"; fi'
+
+[Desktop Action Terminal]  
+Name=Open in Terminal
+Exec=bash -c 'SCRIPT_DIR="$(dirname "$(readlink -f "%k")")"; cd "$SCRIPT_DIR" && x-terminal-emulator -e bash -c "echo \"Xbox 360 WiFi Emulator Directory\"; echo \"Files available:\"; ls -la *.py 2>/dev/null || echo \"No Python files found\"; echo; echo \"To run installer: python3 installer.py\"; echo \"Press Enter to continue...\"; read"'
+
+Actions=Install;Terminal;

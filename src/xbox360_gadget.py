@@ -178,8 +178,9 @@ class Xbox360Gadget:
         if link_path.exists():
             os.unlink(link_path)
         
-        # Create symlink
-        os.symlink("../../functions/ecm.usb0", link_path)
+        # Create symlink (use absolute path to avoid issues)
+        function_abs_path = self.gadget_path / "functions" / "ecm.usb0"
+        os.symlink(str(function_abs_path), str(link_path))
         
         logger.info("✅ USB Ethernet function created - will create usb0 interface")
     
@@ -198,8 +199,9 @@ class Xbox360Gadget:
         if link_path.exists():
             os.unlink(link_path)
         
-        # Create symlink
-        os.symlink("../../functions/ffs.xbox360", link_path)
+        # Create symlink (use absolute path to avoid issues)
+        function_abs_path = self.gadget_path / "functions" / "ffs.xbox360"
+        os.symlink(str(function_abs_path), str(link_path))
         
         logger.info("✅ FunctionFS function created")
     
